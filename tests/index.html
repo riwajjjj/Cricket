@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crease tests</title>
+<link rel="stylesheet" href="../css/fonts.css">
+<style>
+  :root { --bg:#0d1411; --card:#151f1a; --line:#24332b; --ink:#e8efe9; --mute:#93a69a; --ok:#4fd18b; --bad:#ff6b6b; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f4f6f3; --card:#fff; --line:#dde5df; --ink:#14201a; --mute:#5b6b61; --ok:#16864a; --bad:#c62828; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 'Figtree', system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-family: 'Saira Condensed', sans-serif; font-weight: 800; font-size: 2rem; margin: 0 0 4px; letter-spacing: .02em; }
+  .sum { color: var(--mute); margin: 0 0 20px; }
+  .sum b.ok { color: var(--ok); } .sum b.bad { color: var(--bad); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 12px; overflow: hidden; }
+  h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: var(--mute); margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  ul { list-style: none; margin: 0; padding: 4px 0; }
+  li { padding: 6px 14px 6px 36px; position: relative; }
+  li::before { position: absolute; left: 14px; font-weight: 700; }
+  li.pass::before { content: '✓'; color: var(--ok); }
+  li.fail::before { content: '✕'; color: var(--bad); }
+  li .err { display: block; color: var(--bad); font: 13px/1.4 'JetBrains Mono', monospace; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Crease tests</h1>
+  <p class="sum" id="sum">Running…</p>
+  <div id="out"></div>
+</main>
+<script type="module" src="browser.js"></script>
+</body>
+</html>

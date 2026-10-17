@@ -1,0 +1,21 @@
+{
+  "name": "Crease Cricket Calculator",
+  "short_name": "Crease",
+  "description": "Cricket stats calculator and ball-by-ball live scorer that works offline.",
+  "start_url": "./index.html#live",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#08120f",
+  "theme_color": "#08120f",
+  "categories": ["sports", "utilities"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Live scorer", "url": "./index.html#live" },
+    { "name": "Saved matches", "url": "./index.html#saved" }
+  ]
+}

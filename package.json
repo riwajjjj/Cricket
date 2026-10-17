@@ -1,0 +1,10 @@
+{
+  "name": "crease",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cricket stats calculator and live scorer",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}

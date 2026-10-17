@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Crease Cricket Calculator</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Cricket stats calculator: batting, bowling, chase maths, NRR, DLS-style targets, impact ratings, player comparison and a ball-by-ball live scorer.">
+<meta name="theme-color" content="#08120f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Crease">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="css/fonts.css">
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <svg class="brand-ball" viewBox="0 0 40 40" aria-hidden="true">
+        <circle cx="20" cy="20" r="17" class="ball-fill"/>
+        <path d="M9 9.5c6.5 5 6.5 16 0 21M31 9.5c-6.5 5-6.5 16 0 21" class="ball-seam"/>
+      </svg>
+      <div class="brand-text">
+        <span class="brand-name">Crease</span>
+        <span class="brand-sub">Cricket stats lab</span>
+      </div>
+    </div>
+
+    <div class="format-picker" role="radiogroup" aria-label="Match format">
+      <button type="button" role="radio" data-format="T20">T20</button>
+      <button type="button" role="radio" data-format="ODI">ODI</button>
+      <button type="button" role="radio" data-format="Test">Test</button>
+      <button type="button" role="radio" data-format="T10">T10</button>
+      <button type="button" role="radio" data-format="Custom">Custom</button>
+      <label class="custom-overs" id="custom-overs-wrap" hidden>
+        <span class="sr-only">Overs per side</span>
+        <input id="custom-overs" type="text" inputmode="numeric" autocomplete="off" value="15" aria-label="Overs per side for custom format">
+        <span aria-hidden="true">ov</span>
+      </label>
+    </div>
+
+    <button type="button" id="install-btn" class="btn sm install-btn" hidden>Install app</button>
+    <button type="button" id="theme-toggle" class="icon-btn" aria-label="Switch to light theme">
+      <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg>
+    </button>
+  </div>
+
+  <nav class="tabs" role="tablist" aria-label="Calculators">
+    <button type="button" role="tab" id="t-batting" data-tab="batting">Batting</button>
+    <button type="button" role="tab" id="t-bowling" data-tab="bowling">Bowling</button>
+    <button type="button" role="tab" id="t-nrr" data-tab="nrr">Net run rate</button>
+    <button type="button" role="tab" id="t-dls" data-tab="dls">Rain target</button>
+    <button type="button" role="tab" id="t-impact" data-tab="impact">Impact</button>
+    <button type="button" role="tab" id="t-compare" data-tab="compare">Compare</button>
+    <button type="button" role="tab" id="t-live" data-tab="live">Live scorer</button>
+    <button type="button" role="tab" id="t-players" data-tab="players">Players</button>
+    <button type="button" role="tab" id="t-tournament" data-tab="tournament">Tournament</button>
+    <button type="button" role="tab" id="t-saved" data-tab="saved">Saved</button>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <!-- ============ BATTING ============ -->
+  <section class="tab-panel" id="tab-batting" role="tabpanel" aria-labelledby="t-batting">
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Batting</p>
+        <h1>Every batting rate from one set of numbers</h1>
+        <p class="lede">Enter career, season or series totals. Ratings change with the format picked at the top.</p>
+      </div>
+      <div class="head-actions">
+        <button type="button" class="btn ghost" data-reset="batting">Reset example</button>
+        <button type="button" class="btn ghost" data-save="bat">Save player</button>
+        <button type="button" class="btn" data-image="batting">Share as image</button>
+      </div>
+    </div>
+    <div class="layout">
+      <div class="col-in">
+        <div class="card">
+          <h2 class="card-title">Your numbers</h2>
+          <div class="fields" data-group="bat"></div>
+          <ul class="warns" id="w-bat" hidden></ul>
+        </div>
+      </div>
+      <div class="col-out">
+        <div class="kpis" id="k-bat"></div>
+        <div class="grid-2">
+          <div class="card">
+            <h2 class="card-title">Where the runs came from</h2>
+            <div class="chart-box sm"><canvas id="c-bat-runs" aria-label="Run sources chart" role="img"></canvas></div>
+          </div>
+          <div class="card">
+            <h2 class="card-title">What happened to each ball</h2>
+            <div class="chart-box sm"><canvas id="c-bat-balls" aria-label="Ball outcomes chart" role="img"></canvas></div>
+          </div>
+        </div>
+        <div class="card">
+          <h2 class="card-title">Target solver</h2>
+          <div class="fields three" data-group="batT"></div>
+          <div class="solve-out" id="o-bat-t"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ BOWLING ============ -->
+  <section class="tab-panel" id="tab-bowling" role="tabpanel" aria-labelledby="t-bowling" hidden>
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Bowling</p>
+        <h1>Economy, average and strike rate, done properly</h1>
+        <p class="lede">Overs use cricket notation: 12.4 means 12 overs and 4 balls (76 balls), not 12.4 of anything.</p>
+      </div>
+      <div class="head-actions">
+        <button type="button" class="btn ghost" data-reset="bowling">Reset example</button>
+        <button type="button" class="btn ghost" data-save="bowl">Save player</button>
+        <button type="button" class="btn" data-image="bowling">Share as image</button>
+      </div>
+    </div>
+    <div class="layout">
+      <div class="col-in">
+        <div class="card">
+          <h2 class="card-title">Your figures</h2>
+          <div class="fields" data-group="bowl"></div>
+          <ul class="warns" id="w-bowl" hidden></ul>
+        </div>
+      </div>
+      <div class="col-out">
+        <div class="figures-strip" id="bowl-figs"></div>
+        <div class="kpis" id="k-bowl"></div>
+        <div class="grid-2">
+          <div class="card">
+            <h2 class="card-title">How the wickets fell</h2>
+            <div class="chart-box sm"><canvas id="c-bowl-wk" aria-label="Wicket types chart" role="img"></canvas></div>
+          </div>
+          <div class="card">
+            <h2 class="card-title">Ball outcomes</h2>
+            <div class="chart-box sm"><canvas id="c-bowl-balls" aria-label="Bowling ball outcomes chart" role="img"></canvas></div>
+          </div>
+        </div>
+        <div class="card">
+          <h2 class="card-title">Target solver</h2>
+          <div class="fields" data-group="bowlT"></div>
+          <div class="solve-out" id="o-bowl-t"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ NRR ============ -->
+  <section class="tab-panel" id="tab-nrr" role="tabpanel" aria-labelledby="t-nrr" hidden>
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Tournament</p>
+        <h1>Net run rate and the margin you need</h1>
+        <p class="lede">A team bowled out is charged its full quota of overs, as the playing conditions require. Tick "all out" and the overs are handled for you.</p>
+      </div>
+      <div class="head-actions">
+        <button type="button" class="btn ghost" data-reset="nrr">Reset example</button>
+        <button type="button" class="btn ghost" id="nrr-add">Add match</button>
+      </div>
+    </div>
+    <div class="nrr-note" id="nrr-test-note" hidden>Net run rate is used in limited-overs tournaments. Pick T20, ODI, T10 or Custom at the top to use this tab.</div>
+    <div class="card">
+      <h2 class="card-title">Results so far</h2>
+      <div class="tbl-wrap"><table class="tbl nrr-tbl" id="nrr-tbl"></table></div>
+      <ul class="warns" id="w-nrr" hidden></ul>
+    </div>
+    <div class="layout">
+      <div class="col-in">
+        <div class="kpis one" id="k-nrr"></div>
+        <div class="card">
+          <h2 class="card-title">Overtake solver</h2>
+          <p class="hint">Enter the NRR you need to beat (a rival's, or a qualification line). The solver uses the totals above plus the next match.</p>
+          <div class="fields" data-group="nrrS"></div>
+        </div>
+      </div>
+      <div class="col-out">
+        <div class="grid-2">
+          <div class="card">
+            <h2 class="card-title">If you bat first</h2>
+            <div class="solve-out" id="o-nrr-bat"></div>
+            <div class="tbl-wrap"><table class="tbl" id="nrr-bat-tbl"></table></div>
+          </div>
+          <div class="card">
+            <h2 class="card-title">If you chase</h2>
+            <div class="solve-out" id="o-nrr-chase"></div>
+            <div class="tbl-wrap"><table class="tbl" id="nrr-chase-tbl"></table></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ DLS ============ -->
+  <section class="tab-panel" id="tab-dls" role="tabpanel" aria-labelledby="t-dls" hidden>
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Rain-affected chase</p>
+        <h1>Revised target and par score</h1>
+        <p class="lede">A DLS-style estimate from a resource model fitted to published Standard Edition values. The official DLS tables are licensed, so match officials' targets can differ by a few runs.</p>
+      </div>
+      <div class="head-actions">
+        <button type="button" class="btn ghost" data-reset="dls">Reset example</button>
+      </div>
+    </div>
+    <div class="nrr-note" id="dls-test-note" hidden>Rain targets apply to limited-overs matches. Pick T20, ODI, T10 or Custom at the top to use this tab.</div>
+    <div class="layout">
+      <div class="col-in">
+        <div class="card">
+          <h2 class="card-title">The match</h2>
+          <div class="fields" data-group="dls"></div>
+          <ul class="warns" id="w-dls" hidden></ul>
+        </div>
+      </div>
+      <div class="col-out">
+        <div class="board" id="dls-board"></div>
+        <div class="kpis" id="k-dls"></div>
+        <div class="card">
+          <h2 class="card-title">Batting resources left, by wickets lost</h2>
+          <div class="chart-box"><canvas id="c-dls" aria-label="Resource curves chart" role="img"></canvas></div>
+          <p class="hint">Each line is the share of a full innings' scoring potential still left with that many overs remaining. Losing wickets flattens the curve, which is why an early stoppage with wickets down costs the chasing side less target.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ IMPACT ============ -->
+  <section class="tab-panel" id="tab-impact" role="tabpanel" aria-labelledby="t-impact" hidden>
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Single-match impact</p>
+        <h1>How much did one performance move the game?</h1>
+        <p class="lede">A 0–100 rating built from volume, tempo and pressure, judged against par numbers for the format.</p>
+      </div>
+      <div class="head-actions">
+        <button type="button" class="btn ghost" data-reset="impact">Reset example</button>
+        <button type="button" class="btn" data-image="impact">Share as image</button>
+      </div>
+    </div>
+    <div class="grid-2 even">
+      <div class="card">
+        <h2 class="card-title">Batting innings</h2>
+        <div class="fields three" data-group="impBat"></div>
+        <ul class="warns" id="w-impBat" hidden></ul>
+        <div class="impact" id="imp-bat"></div>
+      </div>
+      <div class="card">
+        <h2 class="card-title">Bowling spell</h2>
+        <div class="fields three" data-group="impBowl"></div>
+        <ul class="warns" id="w-impBowl" hidden></ul>
+        <div class="impact" id="imp-bowl"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ COMPARE ============ -->
+  <section class="tab-panel" id="tab-compare" role="tabpanel" aria-labelledby="t-compare" hidden>
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Head to head</p>
+        <h1>Two batters, side by side</h1>
+        <p class="lede">Load saved players or type their numbers in. The radar scores each skill against elite numbers for the format.</p>
+      </div>
+      <div class="head-actions">
+        <button type="button" class="btn ghost" data-reset="compare">Reset example</button>
+      </div>
+    </div>
+    <div class="layout cmp-layout">
+      <div class="col-in">
+        <div class="card cmp-card a">
+          <div class="cmp-head"><h2 class="card-title">Player A</h2><select id="cmp-load-a" class="select" aria-label="Load saved player into A"></select></div>
+          <div class="fields" data-group="cmpA"></div>
+        </div>
+        <div class="card cmp-card b">
+          <div class="cmp-head"><h2 class="card-title">Player B</h2><select id="cmp-load-b" class="select" aria-label="Load saved player into B"></select></div>
+          <div class="fields" data-group="cmpB"></div>
+        </div>
+        <ul class="warns" id="w-cmp" hidden></ul>
+      </div>
+      <div class="col-out">
+        <div class="card">
+          <h2 class="card-title">Skill radar</h2>
+          <div class="chart-box tall"><canvas id="c-cmp" aria-label="Player comparison radar" role="img"></canvas></div>
+        </div>
+        <div class="card">
+          <h2 class="card-title">Metric by metric</h2>
+          <div class="tbl-wrap"><table class="tbl cmp-tbl" id="cmp-tbl"></table></div>
+          <p class="verdict" id="cmp-verdict"></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ LIVE ============ -->
+  <section class="tab-panel" id="tab-live" role="tabpanel" aria-labelledby="t-live" hidden>
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Ball by ball</p>
+        <h1>Live scorer</h1>
+        <p class="lede">Score a match as it happens. Strike rotates, overs close and the scorecard builds itself. Your match is kept in this browser if you close the page.</p>
+      </div>
+      <div class="head-actions" id="live-actions"></div>
+    </div>
+    <div id="live-main"></div>
+    <div class="grid-2" id="live-charts" hidden>
+      <div class="card">
+        <h2 class="card-title">Runs per over</h2>
+        <div class="chart-box"><canvas id="c-live-manhattan" aria-label="Runs per over chart" role="img"></canvas></div>
+        <p class="hint">A red outline marks an over in which a wicket fell.</p>
+      </div>
+      <div class="card">
+        <h2 class="card-title">Run worm</h2>
+        <div class="chart-box"><canvas id="c-live-worm" aria-label="Cumulative runs chart" role="img"></canvas></div>
+      </div>
+      <div class="card span-2" id="live-ww-card" hidden>
+        <div class="sc-head" style="margin-bottom:12px"><h2 class="card-title" style="margin:0">Wagon wheel</h2><div class="ww-controls" id="ww-controls"></div></div>
+        <div class="ww-layout"><div id="ww-svg"></div><div id="ww-zones" class="bars"></div></div>
+        <p class="hint">Shots appear here when “Wagon wheel” is ticked under the scoring buttons. Blue lines are fours, gold are sixes, green are 1s, 2s and 3s.</p>
+      </div>
+      <div class="card span-2" id="live-wp-card" hidden>
+        <h2 class="card-title">Chase win probability, over by over</h2>
+        <div class="chart-box"><canvas id="c-live-wp" aria-label="Win probability by over chart" role="img"></canvas></div>
+        <p class="hint" id="live-wp-hint"></p>
+      </div>
+    </div>
+    <div id="live-cards"></div>
+  </section>
+
+  <!-- ============ PLAYERS ============ -->
+  <section class="tab-panel" id="tab-players" role="tabpanel" aria-labelledby="t-players" hidden>
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Career records</p>
+        <h1>Players</h1>
+        <p class="lede">Built from every match you finish in the Live scorer. Add a player's earlier stats once and scored matches are added on top.</p>
+      </div>
+      <div class="head-actions">
+        <button type="button" class="btn ghost" id="pl-add">Add earlier stats</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="pl-controls">
+        <div class="seg" id="pl-view" role="group" aria-label="Show">
+          <button type="button" data-view="bat" aria-pressed="true">Batting</button>
+          <button type="button" data-view="bowl" aria-pressed="false">Bowling</button>
+          <button type="button" data-view="field" aria-pressed="false">Fielding</button>
+        </div>
+        <input id="pl-q" class="select pl-search" type="search" placeholder="Find a player" aria-label="Find a player" autocomplete="off">
+        <select id="pl-format" class="select" aria-label="Format"></select>
+        <select id="pl-team" class="select" aria-label="Team"></select>
+      </div>
+      <p class="hint" id="pl-summary" style="margin:10px 0 0"></p>
+      <div class="tbl-wrap"><table class="tbl rec-tbl" id="pl-tbl"></table></div>
+    </div>
+  </section>
+
+  <!-- ============ TOURNAMENT ============ -->
+  <section class="tab-panel" id="tab-tournament" role="tabpanel" aria-labelledby="t-tournament" hidden>
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Tournament</p>
+        <h1 id="tr-title">Tournaments</h1>
+        <p class="lede">Teams, fixtures and a points table that keeps itself up to date. Score a fixture from here and its result, net run rate and player stats are filled in when it finishes.</p>
+      </div>
+      <div class="head-actions">
+        <select id="tr-select" class="select" aria-label="Choose tournament" hidden></select>
+        <button type="button" class="btn ghost" id="tr-edit" hidden>Edit</button>
+        <button type="button" class="btn ghost danger" id="tr-delete" hidden>Delete</button>
+        <button type="button" class="btn" id="tr-new">New tournament</button>
+      </div>
+    </div>
+    <div id="tr-main" class="tr-main"></div>
+  </section>
+
+  <!-- ============ SAVED ============ -->
+  <section class="tab-panel" id="tab-saved" role="tabpanel" aria-labelledby="t-saved" hidden>
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Library</p>
+        <h1>Saved players and matches</h1>
+        <p class="lede">Stored in this browser only. Back up regularly so a cleared browser or a new phone doesn't lose them.</p>
+      </div>
+      <div class="head-actions">
+        <button type="button" class="btn ghost" id="saved-csv">Export players CSV</button>
+        <button type="button" class="btn ghost danger" id="saved-clear">Clear everything</button>
+      </div>
+    </div>
+    <div class="card backup-card">
+      <div class="backup-text">
+        <h2 class="card-title">Backup</h2>
+        <p class="hint" id="backup-status" style="margin:0"></p>
+      </div>
+      <div class="head-actions">
+        <button type="button" class="btn" id="backup-now">Back up now</button>
+        <button type="button" class="btn ghost" id="backup-restore">Restore from backup</button>
+      </div>
+    </div>
+    <h2 class="section-title">Players</h2>
+    <div class="saved-grid" id="saved-players"></div>
+    <h2 class="section-title">Matches</h2>
+    <div class="saved-grid" id="saved-matches"></div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <p>Formulas follow standard cricket conventions. Win probability, impact ratings and rain targets are estimates.</p>
+</footer>
+
+<div id="tooltip" role="tooltip" hidden></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="modal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-head">
+      <h3 id="modal-title"></h3>
+      <button type="button" class="icon-btn" id="modal-close" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<script src="vendor/chart.umd.js"></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
