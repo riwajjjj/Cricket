@@ -1,7 +1,8 @@
 /* Crease — service worker: keeps a copy of the app so it opens and works with no connection.
    Strategy: answer from the cache straight away, then refresh that file from the network in the
-   background, so edits reach users on their next visit. Change VERSION when files are added or removed. */
-const VERSION = 'crease-v4';
+   background, so edits reach users on their next visit. Change VERSION when files are added or removed,
+   and whenever JS modules change in ways that depend on each other (new exports or imports). */
+const VERSION = 'crease-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -55,9 +56,9 @@ self.addEventListener('install', e => {
 
 self.addEventListener('activate', e => {
   e.waitUntil(
-    caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k.startsWith('crease-') && k !== VERSION).map(k => caches.delete(k))))
-      .then(() => self.clients.claim()),
+      caches.keys()
+          .then(keys => Promise.all(keys.filter(k => k.startsWith('crease-') && k !== VERSION).map(k => caches.delete(k))))
+          .then(() => self.clients.claim()),
   );
 });
 
@@ -70,8 +71,8 @@ self.addEventListener('fetch', e => {
     const key = req.mode === 'navigate' ? './index.html' : req;
     const cached = await cache.match(key, { ignoreSearch: true });
     const fresh = fetch(req)
-      .then(res => { if (res && res.ok && res.type === 'basic') cache.put(key, res.clone()); return res; })
-      .catch(() => null);
+        .then(res => { if (res && res.ok && res.type === 'basic') cache.put(key, res.clone()); return res; })
+        .catch(() => null);
     if (cached) { e.waitUntil(fresh); return cached; }
     const res = await fresh;
     if (res) return res;
