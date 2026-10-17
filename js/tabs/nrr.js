@@ -82,6 +82,9 @@ export function nrrTotals() {
   return { RF, OF, RA, OB, n, nrr, per, warn, Q };
 }
 export const signed = (v, dp = 3) => isNum(v) ? (v > 0.0005 ? '+' : '') + nf(v, dp) : '—';
+// A solver result is strictly above the target, so add decimals until it no longer looks equal to it.
+export const signedVs = (v, target) => { for (let dp = 3; dp < 7; dp++) if (signed(v, dp) !== signed(target, dp)) return signed(v, dp); return signed(v, 7); };
+const nrrSign = v => v == null ? '' : Math.abs(v) < 0.0005 || v >= 0 ? 'pos' : 'neg';
 
 export function calcNRR() {
   const f = fmt();
@@ -98,7 +101,7 @@ export function calcNRR() {
     tr.querySelector('[data-k="ob"]').disabled = !!nrrRows[i].oao;
     const cell = tr.querySelector('[data-out="nrr"]');
     cell.textContent = signed(r.nrr);
-    cell.className = 'num ' + (r.nrr == null ? 'dim' : r.nrr >= 0 ? 'pos' : 'neg');
+    cell.className = 'num ' + (r.nrr == null ? 'dim' : nrrSign(r.nrr));
   });
   const tot = k => $(`#nrr-tbl [data-tot="${k}"]`);
   if (tot('rf')) {
@@ -107,7 +110,7 @@ export function calcNRR() {
     tot('of').textContent = t.n ? fmtOvers(t.OF) : '—';
     tot('ob').textContent = t.n ? fmtOvers(t.OB) : '—';
     tot('nrr').textContent = signed(t.nrr);
-    tot('nrr').className = 'num ' + (t.nrr == null ? '' : t.nrr >= 0 ? 'pos' : 'neg');
+    tot('nrr').className = 'num ' + nrrSign(t.nrr);
   }
   setWarns('w-nrr', [...new Set(t.warn)]);
   setKPI('nrr-main', t.nrr, { dp: 3, signed: true, rating: t.nrr == null ? null : t.nrr >= 0 ? 2 : 0, chip: t.nrr == null ? '' : t.nrr >= 0 ? 'Positive' : 'Negative', sub: t.n ? `Scored ${t.RF} in ${fmtOvers(t.OF)} ov, conceded ${t.RA} in ${fmtOvers(t.OB)} ov` : 'Add a completed match' });
@@ -125,16 +128,16 @@ export function calcNRR() {
   if (isNum(sc) && sc > 0) {
     const r = batFirst(sc);
     if (!r) ob.innerHTML = answer('✗', `Even bowling them out for 0 leaves you below <strong>${signed(tg)}</strong>. Score more, or look at the chase scenario.`, 'bad');
-    else if (r.R === sc - 1) ob.innerHTML = answer('✓', `Any win does it. Win by a single run and your NRR becomes <strong>${signed(r.nrr)}</strong>.`, 'good');
-    else ob.innerHTML = answer(r.R, `or fewer: restrict them to this to finish above <strong>${signed(tg)}</strong>. That's a win by at least <strong>${plural(sc - r.R, 'run')}</strong>, and your NRR would be ${signed(r.nrr)}.`, 'good');
+    else if (r.R === sc - 1) ob.innerHTML = answer('✓', `Any win does it. Win by a single run and your NRR becomes <strong>${signedVs(r.nrr, tg)}</strong>.`, 'good');
+    else ob.innerHTML = answer(r.R, `or fewer: restrict them to this to finish above <strong>${signed(tg)}</strong>. That's a win by at least <strong>${plural(sc - r.R, 'run')}</strong>, and your NRR would be ${signedVs(r.nrr, tg)}.`, 'good');
     const vars = [sc - 30, sc - 15, sc, sc + 15, sc + 30].filter(x => x > 0);
     tb.innerHTML = `<thead><tr><th>You score</th><th class="num">Restrict them to</th><th class="num">Win by</th></tr></thead><tbody>${vars.map(x => { const q = batFirst(x); return `<tr${x === sc ? ' class="hl"' : ''}><td>${x}</td><td class="num">${q ? q.R : '<span class="neg">Not possible</span>'}</td><td class="num">${q ? plural(x - q.R, 'run') : '—'}</td></tr>`; }).join('')}</tbody>`;
   } else { ob.innerHTML = ''; tb.innerHTML = ''; }
   if (isNum(ct) && ct > 0) {
     const r = chaseIt(ct);
     if (!r) oc.innerHTML = answer('✗', `No chase of ${ct} lifts you above <strong>${signed(tg)}</strong>, even off one ball.`, 'bad');
-    else if (r.balls === Qn) oc.innerHTML = answer('✓', `Any win does it. Chasing on the last ball gives an NRR of <strong>${signed(r.nrr)}</strong>.`, 'good');
-    else oc.innerHTML = answer(fmtOvers(r.balls), `overs or fewer: chase ${ct} within <strong>${plural(r.balls, 'ball')}</strong> to finish above ${signed(tg)}. Your NRR would be ${signed(r.nrr)}.`, 'good', 'Assumes they bat their full quota and you finish on exactly the target.');
+    else if (r.balls === Qn) oc.innerHTML = answer('✓', `Any win does it. Chasing on the last ball gives an NRR of <strong>${signedVs(r.nrr, tg)}</strong>.`, 'good');
+    else oc.innerHTML = answer(fmtOvers(r.balls), `overs or fewer: chase ${ct} within <strong>${plural(r.balls, 'ball')}</strong> to finish above ${signed(tg)}. Your NRR would be ${signedVs(r.nrr, tg)}.`, 'good', 'Assumes they bat their full quota and you finish on exactly the target.');
     const vars = [ct - 30, ct - 15, ct, ct + 15, ct + 30].filter(x => x > 0);
     tc.innerHTML = `<thead><tr><th>Target</th><th class="num">Chase within</th><th class="num">Balls</th></tr></thead><tbody>${vars.map(x => { const q = chaseIt(x); return `<tr${x === ct ? ' class="hl"' : ''}><td>${x}</td><td class="num">${q ? fmtOvers(q.balls) + ' ov' : '<span class="neg">Not possible</span>'}</td><td class="num">${q ? q.balls : '—'}</td></tr>`; }).join('')}</tbody>`;
   } else { oc.innerHTML = ''; tc.innerHTML = ''; }

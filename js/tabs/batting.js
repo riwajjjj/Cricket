@@ -5,7 +5,7 @@ import { RENDER } from '../router.js';
 import { batStats } from '../stats.js';
 import { fmt } from '../state.js';
 import { answer, errItems, setKPI, setWarns } from '../ui.js';
-import { $, EPS, isNum, nf, plural } from '../utils.js';
+import { $, EPS, isNum, nf, plural, shown } from '../utils.js';
 /* =====================================================================
    7. BATTING
    ===================================================================== */
@@ -48,12 +48,12 @@ RENDER.batting = function renderBatting() {
   if (s.I > 0 && s.dism === 0) w.push({ t: 'No dismissals yet, so the average is undefined (shown as —).', level: 'info' });
   setWarns('w-bat', w);
 
-  setKPI('bat-sr', s.sr, { rating: rate(s.sr, f.sr), sub: `${s.R} runs off ${s.B} balls` });
-  setKPI('bat-avg', s.avg, { rating: rate(s.avg, f.bavg), sub: s.dism > 0 ? plural(s.dism, 'dismissal') : 'No dismissals' });
+  setKPI('bat-sr', s.sr, { rating: rate(shown(s.sr, 2), f.sr), sub: `${s.R} runs off ${s.B} balls` });
+  setKPI('bat-avg', s.avg, { rating: rate(shown(s.avg, 2), f.bavg), sub: s.dism > 0 ? plural(s.dism, 'dismissal') : 'No dismissals' });
   setKPI('bat-rpi', s.rpi, { dp: 1, sub: s.I ? `Across ${plural(s.I, 'innings', 'innings')}` : '' });
   setKPI('bat-bdry', s.bdry, { dp: 1, suffix: '%', sub: `${s.bRuns} runs in 4s and 6s` });
   setKPI('bat-bpb', s.bpb, { dp: 1, sub: `${s.F4 + s.F6} boundaries` });
-  setKPI('bat-dot', s.dot, { dp: 1, suffix: '%', rating: rate(s.dot, f.batDot, false), sub: `${s.D} dot balls` });
+  setKPI('bat-dot', s.dot, { dp: 1, suffix: '%', rating: rate(shown(s.dot, 1), f.batDot, false), sub: `${s.D} dot balls` });
   setKPI('bat-rot', s.rot, { dp: 1, suffix: '%', sub: 'Balls with runs but no boundary' });
   setKPI('bat-conv', s.conv, { dp: 0, suffix: '%', sub: s.fifties + s.hundreds ? `${s.hundreds} of ${s.fifties + s.hundreds} fifty-plus scores` : 'No 50+ scores yet' });
   setKPI('bat-s100', s.s100, { dp: 2, sub: `${s.F6} sixes` });
@@ -88,4 +88,3 @@ RENDER.batting = function renderBatting() {
   }
   $('#o-bat-t').innerHTML = out.join('');
 };
-

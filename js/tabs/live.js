@@ -5,7 +5,7 @@ import { DLS, fmtOvers, profileFor, winProb } from '../maths.js';
 import { RENDER, nav } from '../router.js';
 import { fmt } from '../state.js';
 import { closeModal, confirmBox, gaugeMarkup, modal, openModal, setGauge, toast } from '../ui.js';
-import { $, $$, esc, nf, plural, store, uid } from '../utils.js';
+import { $, $$, esc, fx, nf, plural, store, uid } from '../utils.js';
 import { saveMatch } from './saved.js';
 /* =====================================================================
    14. LIVE SCORER
@@ -726,8 +726,8 @@ export function liveHTML(animateLast) {
   const lockPad = i.needBowler;
   const overNo = Math.floor(i.balls / 6) + (i.needBowler ? 1 : 1);
   const strip = !i.needBowler && over.balls.length
-    ? over.balls.map((b, k) => chip(b, animateLast && k === over.balls.length - 1)).join('')
-    : `<span class="empty-over">${i.needBowler ? 'Over complete' : 'New over'}</span>`;
+      ? over.balls.map((b, k) => chip(b, animateLast && k === over.balls.length - 1)).join('')
+      : `<span class="empty-over">${i.needBowler ? 'Over complete' : 'New over'}</span>`;
   const prevBowler = i.lastBowler >= 0 ? i.bowlers[i.lastBowler] : null;
   const bowlerOpts = i.bowlers.filter((b, k) => k !== i.lastBowler).map(b => `<option value="${esc(b.name)}"></option>`).join('');
   const prompt = i.needBowler ? `<div class="card prompt-card">
@@ -900,8 +900,8 @@ export function breakHTML() {
   const batTeam = test ? nextBatTeam() : 1 - live.inns[0].bat;
   const t2 = live.teams[batTeam];
   const title = test
-    ? `${ORD[n]} innings: ${t2} to bat${n === 3 ? `, needing ${testNeed(batTeam)} to win` : ''}`
-    : `Second innings: ${t2} need ${live.inns[0].runs + 1}`;
+      ? `${ORD[n]} innings: ${t2} to bat${n === 3 ? `, needing ${testNeed(batTeam)} to win` : ''}`
+      : `Second innings: ${t2} need ${live.inns[0].runs + 1}`;
   const fo = test && nx.canFollowOn ? `<div class="modal-block"><p class="modal-sub">${esc(live.teams[live.inns[0].bat])} lead by ${plural(nx.lead, 'run')}, so they can enforce the follow-on</p>
     <div class="seg"><button type="button" data-act="fo" data-v="0" aria-pressed="${!followOn}">${esc(live.teams[live.inns[0].bat])} bat again</button><button type="button" data-act="fo" data-v="1" aria-pressed="${followOn}">Enforce the follow-on: ${esc(live.teams[live.inns[1].bat])} bat again</button></div></div>` : '';
   const bsq = sqOf(live, batTeam), fsq = sqOf(live, 1 - batTeam);
@@ -912,7 +912,7 @@ export function breakHTML() {
     ${fo}
     <div class="setup-grid">
       ${(bsq ? selectField('l2-s', 'Striker', opts(bsq, batTeam), bsq[0]) + selectField('l2-ns', 'Non-striker', opts(bsq, batTeam), bsq[1]) : liveField('l2-s', 'Striker', 'Batter 1') + liveField('l2-ns', 'Non-striker', 'Batter 2'))
-        + (fsq ? selectField('l2-bw', 'Opening bowler', opts(fsq, 1 - batTeam), fsq[fsq.length - 1]) : liveField('l2-bw', 'Opening bowler', ''))}
+  + (fsq ? selectField('l2-bw', 'Opening bowler', opts(fsq, 1 - batTeam), fsq[fsq.length - 1]) : liveField('l2-bw', 'Opening bowler', ''))}
     </div>
     <p class="err-text" id="l2-err"></p>
     <div class="modal-actions" style="justify-content:flex-start">
@@ -984,11 +984,11 @@ export function scorecardHTML(m, idx) {
     <p class="sc-meta">Extras ${exT} (b ${ex.b}, lb ${ex.lb}, w ${ex.wd}, nb ${ex.nb}${ex.pen ? `, pen ${ex.pen}` : ''})${i.target != null ? ` · Target ${i.target}` : ''}${i.ended ? ` · ${esc(endedText(i.ended, m))}` : ''}</p>
     ${i.fow.length ? `<p class="sc-meta">Fall of wickets: ${i.fow.map(w => `${w.score}-${w.wkt} (${esc(w.name)}, ${w.over} ov)`).join(', ')}</p>` : ''}
     ${(() => {
-      const ov = i.overs.filter(o => o.balls.length);
-      if (!ov.length) return '';
-      const edit = m === live && canEdit();
-      return `<details class="bbb"><summary>Ball by ball${edit ? ' · tap a ball to fix it' : ''}</summary><div class="tbl-wrap"><table class="tbl"><tbody>${ov.map(o => `<tr><td class="dim">Ov ${i.overs.indexOf(o) + 1}</td><td>${esc(i.bowlers[o.bowler]?.name || '')}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true, m)).join('')}</span></td><td class="num"><b>${o.runs}</b></td></tr>`).join('')}</tbody></table></div></details>`;
-    })()}
+    const ov = i.overs.filter(o => o.balls.length);
+    if (!ov.length) return '';
+    const edit = m === live && canEdit();
+    return `<details class="bbb"><summary>Ball by ball${edit ? ' · tap a ball to fix it' : ''}</summary><div class="tbl-wrap"><table class="tbl"><tbody>${ov.map(o => `<tr><td class="dim">Ov ${i.overs.indexOf(o) + 1}</td><td>${esc(i.bowlers[o.bowler]?.name || '')}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true, m)).join('')}</span></td><td class="num"><b>${o.runs}</b></td></tr>`).join('')}</tbody></table></div></details>`;
+  })()}
     ${bowls ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th><th class="num">Dots</th><th class="num">Wd/Nb</th></tr></thead><tbody>${bowls}</tbody></table></div>` : ''}
   </div>`;
 }
@@ -1009,12 +1009,12 @@ export function liveCharts(m) {
   chart('c-live-manhattan', {
     type: 'bar',
     data: { labels, datasets: m.inns.map((i, k) => ({
-      label: innLabel(i, k),
-      data: labels.map((_, j) => perInn[k][j] ? perInn[k][j].runs : null),
-      backgroundColor: cols[k].startsWith('#') ? alpha(cols[k], 0.8) : cols[k],
-      borderColor: labels.map((_, j) => perInn[k][j] && perInn[k][j].wkts ? p.ball : 'rgba(0,0,0,0)'),
-      borderWidth: 2, borderRadius: 4, maxBarThickness: 26,
-    })) },
+        label: innLabel(i, k),
+        data: labels.map((_, j) => perInn[k][j] ? perInn[k][j].runs : null),
+        backgroundColor: cols[k].startsWith('#') ? alpha(cols[k], 0.8) : cols[k],
+        borderColor: labels.map((_, j) => perInn[k][j] && perInn[k][j].wkts ? p.ball : 'rgba(0,0,0,0)'),
+        borderWidth: 2, borderRadius: 4, maxBarThickness: 26,
+      })) },
     options: baseOpts({ scales: axes({ x: 'Over', y: 'Runs' }), plugins: { tooltip: { callbacks: { afterLabel: c => { const o = perInn[c.datasetIndex][c.dataIndex]; return o && o.wkts ? `${plural(o.wkts, 'wicket')}` : ''; } } } } }),
   });
   const wl = Array.from({ length: maxO + 1 }, (_, k) => String(k));
@@ -1039,9 +1039,9 @@ export function liveCharts(m) {
     chart('c-live-wp', {
       type: 'line',
       data: { labels: wp.map(x => x.l), datasets: [
-        { label: `${t2} win chance`, data: wp.map(x => x.p), borderColor: p.fg2, borderWidth: 2.5, pointRadius: 3, pointBackgroundColor: p.fg2, tension: 0.25, fill: { target: { value: 50 }, above: alpha(p.sky, 0.28), below: alpha(p.accent, 0.28) } },
-        { label: 'Even', data: wp.map(() => 50), borderColor: p.line2, borderDash: [4, 4], borderWidth: 1, pointRadius: 0, fill: false },
-      ] },
+          { label: `${t2} win chance`, data: wp.map(x => x.p), borderColor: p.fg2, borderWidth: 2.5, pointRadius: 3, pointBackgroundColor: p.fg2, tension: 0.25, fill: { target: { value: 50 }, above: alpha(p.sky, 0.28), below: alpha(p.accent, 0.28) } },
+          { label: 'Even', data: wp.map(() => 50), borderColor: p.line2, borderDash: [4, 4], borderWidth: 1, pointRadius: 0, fill: false },
+        ] },
       options: baseOpts({ interaction: { mode: 'index', intersect: false }, scales: ax, plugins: { legend: { display: false }, tooltip: { filter: c => c.datasetIndex === 0, callbacks: { title: it => `After ${it[0].label} overs`, label: c => ` ${t2} ${c.parsed.y}%  ·  ${t1} ${Math.round((100 - c.parsed.y) * 10) / 10}%` } } } }),
     });
   }
@@ -1146,17 +1146,18 @@ function wagonCard(m) {
   shots.forEach(s => { const z = zones[sectorOf(s, s.left)]; z.runs += s.r; z.n++; });
   const total = zones.reduce((a, z) => a + z.runs, 0) || 1;
   const offRuns = zones.slice(0, 4).reduce((a, z) => a + z.runs, 0);
+  const offPct = Math.round(offRuns / total * 100); // leg side is the remainder, so the two always add to 100
   $('#ww-controls').innerHTML = `<select id="ww-who" class="select" aria-label="Whose shots">${opts.map(o => `<option value="${esc(o.v)}"${o.v === wwSel ? ' selected' : ''}>${esc(o.l)}</option>`).join('')}</select>
     ${one ? `<label class="check"><input type="checkbox" id="ww-lh" data-name="${esc(nameKey(one.name))}"${lefty(one.name) ? ' checked' : ''}> Left-handed</label>` : ''}`;
   $('#ww-svg').innerHTML = fieldSVG(shots, { left: one ? lefty(one.name) : false });
-  $('#ww-zones').innerHTML = `<p class="hint" style="margin:0 0 10px">${plural(shots.length, 'scoring shot')} recorded · off side ${Math.round(offRuns / total * 100)}%, leg side ${Math.round((total - offRuns) / total * 100)}% of runs${who === 'all' ? ' (each batter\'s own off and leg side)' : ''}</p>
+  $('#ww-zones').innerHTML = `<p class="hint" style="margin:0 0 10px">${plural(shots.length, 'scoring shot')} recorded · off side ${offPct}%, leg side ${100 - offPct}% of runs${who === 'all' ? ' (each batter\'s own off and leg side)' : ''}</p>
     ${SECTORS.map((nm, z) => `<div class="bar-row"><span>${nm}</span><span class="pts">${plural(zones[z].runs, 'run')} · ${plural(zones[z].n, 'shot')}</span><div class="track"><div class="fill" style="width:${Math.round(zones[z].runs / total * 100)}%"></div></div></div>`).join('')}`;
 }
 
 /* ---------- Match-ups ---------- */
 function matchupsCard(i) {
   const rows = Object.entries(i.mu || {}).map(([k, v]) => { const [bi, ti] = k.split('|').map(Number); return { ...v, bowler: i.bowlers[bi]?.name || '?', batter: i.batters[ti]?.name || '?' }; })
-    .filter(r => r.balls || r.outs).sort((a, b) => b.balls - a.balls).slice(0, 8);
+      .filter(r => r.balls || r.outs).sort((a, b) => b.balls - a.balls).slice(0, 8);
   if (!rows.length) return '';
   return `<div class="card"><h2 class="card-title">Match-ups</h2><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Batter</th><th>Bowler</th><th class="num">R</th><th class="num">B</th><th class="num">SR</th><th class="num">Dots</th><th class="num">Out</th></tr></thead><tbody>
     ${rows.map(r => `<tr><td>${esc(r.batter)}</td><td>${esc(r.bowler)}</td><td class="num"><b>${r.runs}</b></td><td class="num">${r.balls}</td><td class="num">${r.balls ? nf(r.runs / r.balls * 100, 1) : '—'}</td><td class="num">${r.dots}</td><td class="num">${r.outs ? `<span class="neg">${r.outs}</span>` : '—'}</td></tr>`).join('')}
@@ -1463,10 +1464,10 @@ export function scorecardCSV(m) {
   m.inns.forEach((i, k) => {
     rows.push([`${m.teams[i.bat]} innings ${k + 1}`, `${i.runs}/${i.wkts}`, `${fmtOvers(i.balls)} overs`]);
     rows.push(['Batter', 'Dismissal', 'Runs', 'Balls', '4s', '6s', 'SR']);
-    i.batters.forEach(b => rows.push([b.name + roleTag(m, i.bat, b.name), howOf(b), b.runs, b.balls, b.f4, b.f6, b.balls ? (b.runs / b.balls * 100).toFixed(2) : '']));
+    i.batters.forEach(b => rows.push([b.name + roleTag(m, i.bat, b.name), howOf(b), b.runs, b.balls, b.f4, b.f6, b.balls ? fx(b.runs / b.balls * 100) : '']));
     rows.push(['Extras', `b ${i.extras.b}, lb ${i.extras.lb}, w ${i.extras.wd}, nb ${i.extras.nb}${i.extras.pen ? `, pen ${i.extras.pen}` : ''}`]);
     rows.push(['Bowler', 'Overs', 'Maidens', 'Runs', 'Wickets', 'Econ', 'Dots']);
-    i.bowlers.filter(b => b.balls || b.runs).forEach(b => rows.push([b.name + roleTag(m, 1 - i.bat, b.name), fmtOvers(b.balls), b.maidens, b.runs, b.wkts, b.balls ? (b.runs / (b.balls / 6)).toFixed(2) : '', b.dots]));
+    i.bowlers.filter(b => b.balls || b.runs).forEach(b => rows.push([b.name + roleTag(m, 1 - i.bat, b.name), fmtOvers(b.balls), b.maidens, b.runs, b.wkts, b.balls ? fx(b.runs / (b.balls / 6)) : '', b.dots]));
     rows.push([]);
   });
   if (m.result) rows.push(['Result', m.result]);

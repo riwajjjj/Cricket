@@ -5,7 +5,7 @@ import { RENDER } from '../router.js';
 import { bowlStats } from '../stats.js';
 import { fmt } from '../state.js';
 import { answer, errItems, setKPI, setWarns } from '../ui.js';
-import { $, EPS, isNum, nf, plural, sum } from '../utils.js';
+import { $, EPS, isNum, nf, plural, shown, sum } from '../utils.js';
 /* =====================================================================
    8. BOWLING
    ===================================================================== */
@@ -49,10 +49,10 @@ RENDER.bowling = function renderBowling() {
   setWarns('w-bowl', w);
 
   $('#bowl-figs').innerHTML = `<span class="figs">${s.W}/${s.R}</span><span class="figs-cap">in ${fmtOvers(s.balls)} overs${s.M ? `, ${plural(s.M, 'maiden')}` : ''}</span>`;
-  setKPI('bowl-econ', s.econ, { rating: rate(s.econ, f.econ, false), sub: 'Runs per over' });
-  setKPI('bowl-avg', s.avg, { rating: rate(s.avg, f.bowlAvg, false), sub: 'Runs per wicket' });
-  setKPI('bowl-sr', s.sr, { dp: 1, rating: rate(s.sr, f.bowlSR, false), sub: 'Balls per wicket' });
-  setKPI('bowl-dot', s.dot, { dp: 1, suffix: '%', rating: rate(s.dot, f.bowlDot), sub: `${s.D} of ${s.balls} balls` });
+  setKPI('bowl-econ', s.econ, { rating: rate(shown(s.econ, 2), f.econ, false), sub: 'Runs per over' });
+  setKPI('bowl-avg', s.avg, { rating: rate(shown(s.avg, 2), f.bowlAvg, false), sub: 'Runs per wicket' });
+  setKPI('bowl-sr', s.sr, { dp: 1, rating: rate(shown(s.sr, 1), f.bowlSR, false), sub: 'Balls per wicket' });
+  setKPI('bowl-dot', s.dot, { dp: 1, suffix: '%', rating: rate(shown(s.dot, 1), f.bowlDot), sub: `${s.D} of ${s.balls} balls` });
   setKPI('bowl-mdn', s.mdn, { dp: 1, suffix: '%', sub: `${s.M} of ${s.full} overs` });
   setKPI('bowl-xpo', s.xpo, { dp: 2, sub: `${s.Wd} wides, ${s.Nb} no-balls` });
 
@@ -78,4 +78,3 @@ RENDER.bowling = function renderBowling() {
   }
   $('#o-bowl-t').innerHTML = out.join('');
 };
-

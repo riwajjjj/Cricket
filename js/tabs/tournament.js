@@ -6,7 +6,7 @@ import { buildRecords, finishedMatches } from '../records.js';
 import { RENDER, appHooks, showTab } from '../router.js';
 import { fixtureOutcome, pointsTable } from '../stats.js';
 import { closeModal, confirmBox, openModal, toast } from '../ui.js';
-import { $, esc, plural, store, uid } from '../utils.js';
+import { $, esc, nf, plural, store, uid } from '../utils.js';
 import { clearLive, live, matchHooks, scorecardHTML, setupFromFixture } from './live.js';
 import { loadNRR } from './nrr.js';
 import { saveMatch } from './saved.js';
@@ -21,7 +21,7 @@ function update(t) { t.updated = Date.now(); const ts = list(); const k = ts.fin
 /* ---------- Results ---------- */
 const outcome = fixtureOutcome;
 const table = t => pointsTable(t, finishedMatches());
-const signed = v => v == null ? '—' : (v > 0.0005 ? '+' : '') + v.toFixed(3);
+const signed = v => v == null ? '—' : (v > 0.0005 ? '+' : '') + nf(v, 3);
 
 /* ---------- Render ---------- */
 RENDER.tournament = function renderTournament() {

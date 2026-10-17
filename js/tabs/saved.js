@@ -4,7 +4,7 @@ import { fmtOvers, parseOvers } from '../maths.js';
 import { RENDER, showTab } from '../router.js';
 import { fmt } from '../state.js';
 import { confirmBox, openModal, toast } from '../ui.js';
-import { $, esc, nf, store, uid } from '../utils.js';
+import { $, esc, fx, nf, store, uid } from '../utils.js';
 import { batStats } from './batting.js';
 import { bowlStats } from './bowling.js';
 import { loadIntoCompare } from './compare.js';
@@ -118,12 +118,12 @@ $('#saved-csv').addEventListener('click', () => {
     const d = p.data;
     if (p.kind === 'bat') {
       const s = batStats(Object.fromEntries(Object.entries(d).map(([k, v]) => [k, k === 'name' ? v : (v === '' ? null : Number(v))])));
-      rows.push([p.name, 'Batting', p.format, s.R, s.B, s.I, s.NO, s.avg?.toFixed(2) ?? '', s.sr?.toFixed(2) ?? '', '', '', '', '', '']);
+      rows.push([p.name, 'Batting', p.format, s.R, s.B, s.I, s.NO, fx(s.avg), fx(s.sr), '', '', '', '', '']);
     } else {
       const v = { ...d, overs: parseOvers(d.overs).balls };
       Object.keys(v).forEach(k => { if (k !== 'name' && k !== 'overs') v[k] = v[k] === '' ? null : Number(v[k]); });
       const s = bowlStats(v);
-      rows.push([p.name, 'Bowling', p.format, '', '', '', '', '', '', fmtOvers(s.balls), s.W, s.R, s.econ?.toFixed(2) ?? '', s.avg?.toFixed(2) ?? '']);
+      rows.push([p.name, 'Bowling', p.format, '', '', '', '', '', '', fmtOvers(s.balls), s.W, s.R, fx(s.econ), fx(s.avg)]);
     }
   });
   showCSV('crease-players.csv', toCSV(rows));
@@ -134,4 +134,3 @@ $('#saved-clear').addEventListener('click', async () => {
     store.set('players', []); store.set('matches', []); RENDER.saved(); toast('Saved items cleared');
   }
 });
-

@@ -8,7 +8,12 @@ export const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 export const isNum = v => typeof v === 'number' && Number.isFinite(v);
 export const sum = a => a.reduce((x, y) => x + y, 0);
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-export const nf = (v, dp = 2) => isNum(v) ? v.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp }) : '—';
+// One rounding path for everything shown or exported. A value that rounds to zero never shows a minus sign.
+export const nf = (v, dp = 2) => isNum(v) ? v.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp }).replace(/^-(0(\.0+)?)$/, '$1') : '—';
+// Plain-number text for CSV files (no thousands commas), rounded exactly as nf rounds it on screen.
+export const fx = (v, dp = 2) => isNum(v) ? nf(v, dp).replace(/,/g, '') : '';
+// The value as displayed, for rating bands, so a figure shown as 38.0 is rated as 38.0.
+export const shown = (v, dp = 2) => isNum(v) ? Number(fx(v, dp)) : v;
 export const plural = (n, w, p) => `${n} ${n === 1 ? w : (p || w + 's')}`;
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 export const reduceMotion = typeof window !== 'undefined' && !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -29,4 +34,3 @@ export function deepMerge(a, b) {
   }
   return out;
 }
-
