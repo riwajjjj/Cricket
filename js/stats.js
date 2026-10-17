@@ -65,7 +65,7 @@ export function nrrSolveChase(base, target, runsToWin, quotaBalls) {
 
 /* ---------- Rain-affected target (DLS-style) ---------- */
 // S: team 1 total; n1, n2: overs each side had at the start; u: balls bowled to team 2 before the stoppage;
-// w: wickets team 2 had lost; lost: balls lost; formatOvers: the format's full innings (sets the G adjustment).
+// w: wickets team 2 had lost; lost: balls lost. formatOvers is accepted for older callers but no longer used.
 export function dlsRevised({ S, n1, n2, u = 0, w = 0, lost = 0, formatOvers = 50 }) {
   const R1 = DLS.res(n1, 0);
   const start2 = DLS.res(n2, 0);
@@ -73,8 +73,8 @@ export function dlsRevised({ S, n1, n2, u = 0, w = 0, lost = 0, formatOvers = 50
   const after = DLS.res((n2 * 6 - u - lost) / 6, w);
   const used = start2 - atStop;
   const R2 = used + after;
-  const G = G50 * DLS.res(formatOvers, 0) / 100;
-  const parFor = R => (R <= R1 ? S * R / R1 : S + G * (R - R1) / 100);
+  // Resources are % of a 50-over innings at every match length, so G50 applies unscaled (T20s included).
+  const parFor = R => (R <= R1 ? S * R / R1 : S + G50 * (R - R1) / 100);
   return {
     R1, R2, used, after,
     target: Math.floor(parFor(R2) + EPS) + 1,
@@ -99,8 +99,7 @@ export function resourcesWithStops(startBalls, stops = []) {
 // Team 2's target, and its par score at this moment (what it needed if no more play were possible now).
 export function dlsMatch({ S, n1Balls, stops1 = [], n2Balls, stops2 = [], formatOvers, balls2 = 0, wkts2 = 0 }) {
   const a = resourcesWithStops(n1Balls, stops1), b = resourcesWithStops(n2Balls, stops2);
-  const G = G50 * DLS.res(formatOvers, 0) / 100;
-  const parFor = R => (R <= a.R + EPS ? S * R / a.R : S + G * (R - a.R) / 100);
+  const parFor = R => (R <= a.R + EPS ? S * R / a.R : S + G50 * (R - a.R) / 100);
   const leftNow = DLS.res(Math.max(0, b.alloc - balls2) / 6, wkts2);
   return { R1: a.R, R2: b.R, alloc2: b.alloc, target: Math.floor(parFor(b.R) + EPS) + 1, parNow: Math.floor(parFor(b.R - leftNow) + EPS) };
 }
@@ -206,9 +205,9 @@ export function pointsTable(t, matches) {
   }
   const nrrCmp = (x, y) => (y.nrr ?? -99) - (x.nrr ?? -99);
   out.sort((x, y) => y.pts - x.pts
-    || (tb === 'wins' ? y.w - x.w : 0)
-    || (tb === 'h2h' ? y.h2h - x.h2h : 0)
-    || nrrCmp(x, y) || y.w - x.w || x.team.localeCompare(y.team));
+      || (tb === 'wins' ? y.w - x.w : 0)
+      || (tb === 'h2h' ? y.h2h - x.h2h : 0)
+      || nrrCmp(x, y) || y.w - x.w || x.team.localeCompare(y.team));
   return out;
 }
 

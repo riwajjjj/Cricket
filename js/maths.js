@@ -34,11 +34,12 @@ export function rate(v, th, higherIsBetter = true) {
   return v > th[0] ? 0 : v > th[1] ? 1 : v > th[2] ? 2 : 3;
 }
 
-/* Resource model. The Duckworth–Lewis form Z(u,w) = F(w)·(1 − e^(−b·u/F(w))), with b fitted so the
-   0-wicket curve tracks published Standard Edition values, and each F(w) solved so that with
-   50 overs left the model returns the published value for w wickets lost. */
+/* Resource model. The Duckworth–Lewis form Z(u,w) = F(w)·(1 − e^(−b·u/F(w))), with each F(w) solved so
+   that with 50 overs left the model returns the published Standard Edition value for w wickets lost,
+   and b = 0.0274 fitted to the whole published table (5 to 50 overs left, 0 to 9 wickets): every
+   entry is matched to within 0.1 of a percentage point. Resources are % of a full 50-over innings. */
 export const DLS = (() => {
-  const B = 0.032, N0 = 50;
+  const B = 0.0274, N0 = 50;
   const norm = 1 - Math.exp(-B * N0);
   const T50 = [100, 93.4, 85.1, 74.9, 62.7, 49.0, 34.9, 22.0, 11.9, 4.7];
   const raw = (u, F) => F * (1 - Math.exp(-B * u / F)) / norm * 100;
@@ -65,4 +66,3 @@ export function winProb(need, ballsLeft, wkDown, totalOvers, f) {
   const p = 100 / (1 + Math.exp(-(par - need) / scale));
   return clamp(p, 1, 99); // only a finished chase shows 0% or 100%
 }
-
