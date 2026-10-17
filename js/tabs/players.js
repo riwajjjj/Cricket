@@ -72,8 +72,8 @@ RENDER.players = function renderPlayers() {
   $$seg();
   const v = ui.view;
   rows = rows.filter(r => (v === 'bat' ? r.hasBat : v === 'bowl' ? r.hasBowl : r.hasField))
-      .filter(r => !ui.q || r.key.includes(nameKey(ui.q)))
-      .filter(r => !ui.team || r.r.teams.has(ui.team));
+    .filter(r => !ui.q || r.key.includes(nameKey(ui.q)))
+    .filter(r => !ui.team || r.r.teams.has(ui.team));
   const [sk, dir] = ui.sort[v];
   rows.sort((a, b) => {
     const x = sortVal(a, sk, v), y = sortVal(b, sk, v);
@@ -86,8 +86,8 @@ RENDER.players = function renderPlayers() {
   const tbl = $('#pl-tbl');
   const nMatches = filteredMatches().length;
   $('#pl-summary').textContent = all.length
-      ? `${plural(nMatches, 'finished match', 'finished matches')}${ui.format ? ` in ${ui.format}` : ''} · ${plural(rows.length, 'player')} shown${ui.format ? ' · earlier stats are only included under All formats' : ''}`
-      : 'No finished matches yet.';
+    ? `${plural(nMatches, 'finished match', 'finished matches')}${ui.format ? ` in ${ui.format}` : ''} · ${plural(rows.length, 'player')} shown${ui.format ? ' · earlier stats are only included under All formats' : ''}`
+    : 'No finished matches yet.';
   if (!rows.length) {
     tbl.innerHTML = `<tbody><tr><td class="empty-cell">${all.length || Object.keys(careerBase()).length ? 'No players match these filters.' : 'Records build themselves from matches you finish in the Live scorer. You can also add a player\'s earlier stats with “Add earlier stats”.'}</td></tr></tbody>`;
     return;
@@ -140,29 +140,29 @@ function openPlayer(key) {
       </div></div>
     </div>
     ${(() => {
-    const tbl = (title, m, who) => {
-      const rows = [...m.values()].filter(x => x.balls || x.outs).sort((a, b) => b.balls - a.balls).slice(0, 6);
-      if (!rows.length) return '';
-      return `<div class="rec-block"><p class="modal-sub">${title}</p><table class="tbl"><thead><tr><th>${who}</th><th class="num">R</th><th class="num">B</th><th class="num">SR</th><th class="num">Out</th></tr></thead><tbody>${rows.map(x => `<tr><td>${esc(x.name)}</td><td class="num">${x.runs}</td><td class="num">${x.balls}</td><td class="num">${x.balls ? nf(x.runs / x.balls * 100, 1) : '—'}</td><td class="num">${x.outs || '—'}</td></tr>`).join('')}</tbody></table></div>`;
-    };
-    const a = tbl('Batting against', r.vsBowl, 'Bowler'), b = tbl('Bowling to', r.vsBat, 'Batter');
-    return a || b ? `<div class="grid-2" style="margin-top:14px">${a}${b}</div>` : '';
-  })()}
+      const tbl = (title, m, who) => {
+        const rows = [...m.values()].filter(x => x.balls || x.outs).sort((a, b) => b.balls - a.balls).slice(0, 6);
+        if (!rows.length) return '';
+        return `<div class="rec-block"><p class="modal-sub">${title}</p><table class="tbl"><thead><tr><th>${who}</th><th class="num">R</th><th class="num">B</th><th class="num">SR</th><th class="num">Out</th></tr></thead><tbody>${rows.map(x => `<tr><td>${esc(x.name)}</td><td class="num">${x.runs}</td><td class="num">${x.balls}</td><td class="num">${x.balls ? nf(x.runs / x.balls * 100, 1) : '—'}</td><td class="num">${x.outs || '—'}</td></tr>`).join('')}</tbody></table></div>`;
+      };
+      const a = tbl('Batting against', r.vsBowl, 'Bowler'), b = tbl('Bowling to', r.vsBat, 'Batter');
+      return a || b ? `<div class="grid-2" style="margin-top:14px">${a}${b}</div>` : '';
+    })()}
     ${(() => {
-    const inns = r.games.filter(g => g.bat).sort((a, b) => b.bat.r - a.bat.r || Number(b.bat.out === false) - Number(a.bat.out === false)).slice(0, 3);
-    const spells = r.games.filter(g => g.bowl && g.bowl.balls).sort((a, b) => b.bowl.w - a.bowl.w || a.bowl.r - b.bowl.r).slice(0, 3);
-    const mine = milestones().filter(e => e.key.split('|').includes(r.key)).slice(0, 6);
-    if (!inns.length && !spells.length && !mine.length) return '';
-    const li = (main, sub) => `<li><b>${main}</b><span>${esc(sub)}</span></li>`;
-    const day = g => new Date(g.date).toLocaleDateString();
-    return `<div class="grid-2" style="margin-top:14px">
+      const inns = r.games.filter(g => g.bat).sort((a, b) => b.bat.r - a.bat.r || Number(b.bat.out === false) - Number(a.bat.out === false)).slice(0, 3);
+      const spells = r.games.filter(g => g.bowl && g.bowl.balls).sort((a, b) => b.bowl.w - a.bowl.w || a.bowl.r - b.bowl.r).slice(0, 3);
+      const mine = milestones().filter(e => e.key.split('|').includes(r.key)).slice(0, 6);
+      if (!inns.length && !spells.length && !mine.length) return '';
+      const li = (main, sub) => `<li><b>${main}</b><span>${esc(sub)}</span></li>`;
+      const day = g => new Date(g.date).toLocaleDateString();
+      return `<div class="grid-2" style="margin-top:14px">
         <div class="rec-block"><p class="modal-sub">Best performances</p><ul class="best-list">
           ${inns.map(g => li(`${g.bat.r}${g.bat.out ? '' : '*'} <small>(${g.bat.b})</small>`, `${g.title} · ${day(g)}`)).join('')}
           ${spells.map(g => li(`${g.bowl.w}/${g.bowl.r} <small>(${fmtOvers(g.bowl.balls)} ov)</small>`, `${g.title} · ${day(g)}`)).join('')}
         </ul></div>
         <div class="rec-block"><p class="modal-sub">Milestones</p>${mine.length ? `<ul class="ms-list">${mine.map(msItem).join('')}</ul>` : '<p class="hint" style="margin:0">None yet: 50s, 100s, four-wicket hauls, big partnerships and career landmarks appear here.</p>'}</div>
       </div>`;
-  })()}
+    })()}
     ${base ? `<p class="hint">From scored matches: ${app.runs} runs, ${r.bowl.wkts} wickets. Earlier stats add ${Number(base.bat?.runs) || 0} runs and ${Number(base.bowl?.wkts) || 0} wickets.</p>` : ''}
     ${games ? `<p class="modal-sub" style="margin-top:16px">Recent scored matches</p><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Date</th><th>Match</th><th class="num">Batting</th><th class="num">Bowling</th><th class="num">Fielding</th></tr></thead><tbody>${games}</tbody></table></div>` : '<p class="hint">No scored matches yet: these figures are the earlier stats entered by hand.</p>'}
     <div class="modal-actions">

@@ -115,9 +115,9 @@ function paintCompare(a, b, metrics, axes, keys, score, tipDp) {
   chart('c-cmp', {
     type: 'radar',
     data: { labels: axes, datasets: [
-        { label: a.name, data: score(a), borderColor: p.accent, backgroundColor: alpha(p.accent, 0.22), pointBackgroundColor: p.accent, borderWidth: 2 },
-        { label: b.name, data: score(b), borderColor: p.sky, backgroundColor: alpha(p.sky, 0.2), pointBackgroundColor: p.sky, borderWidth: 2 },
-      ] },
+      { label: a.name, data: score(a), borderColor: p.accent, backgroundColor: alpha(p.accent, 0.22), pointBackgroundColor: p.accent, borderWidth: 2 },
+      { label: b.name, data: score(b), borderColor: p.sky, backgroundColor: alpha(p.sky, 0.2), pointBackgroundColor: p.sky, borderWidth: 2 },
+    ] },
     options: baseOpts({
       scales: { r: { min: 0, max: 100, ticks: { display: false, stepSize: 25 }, grid: { color: p.line }, angleLines: { color: p.line }, pointLabels: { color: p.fg2, font: { family: FONT, size: 12, weight: '600' } } } },
       plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: c => { const s = c.datasetIndex === 0 ? a : b; const k = keys[c.dataIndex]; return ` ${c.dataset.label}: ${nf(s[k], tipDp(k))} (${c.parsed.r}/100)`; } } } },
@@ -170,3 +170,4 @@ RENDER.compare = function renderCompare() {
   const norm = s => keys.map(k => isNum(s[k]) ? Math.round(clamp(s[k] / refs[k], 0, 1) * 100) : 0);
   paintCompare(a, b, CMP_METRICS, ['Average', 'Strike rate', 'Boundary %', '50+ rate', 'Six hitting'], keys, norm, k => (k === 'six' ? 2 : 1));
 };
+

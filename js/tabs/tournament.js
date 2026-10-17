@@ -117,8 +117,8 @@ function koCard(t, ko, byId) {
   const fin = ko.find(f => f.stage === 'F');
   const fw = fin ? koWinner(t, fin, byId) : null;
   const banner = fw ? (fw.team
-      ? `<div class="champ"><span>Champions</span><b>${esc(fw.team)}</b>${fw.how ? `<em>${esc(fw.how)}</em>` : ''}</div>`
-      : `<div class="champ"><span>Final ${esc(fw.how)}</span><b>Trophy shared</b><em>Record a super over winner to decide it</em></div>`) : '';
+    ? `<div class="champ"><span>Champions</span><b>${esc(fw.team)}</b>${fw.how ? `<em>${esc(fw.how)}</em>` : ''}</div>`
+    : `<div class="champ"><span>Final ${esc(fw.how)}</span><b>Trophy shared</b><em>Record a super over winner to decide it</em></div>`) : '';
   const cap = f => {
     const seeds = f.seedA && f.seedB ? ` · ${ordN(f.seedA)} v ${ordN(f.seedB)}` : '';
     return STAGE[f.stage] + seeds;
@@ -357,8 +357,8 @@ function koForm(t) {
     <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Create knockouts</button></div>`);
   const desc = () => {
     $('#ko-desc', body).textContent = type === 'semis'
-        ? `Semi-final 1: ${rows[0].team} (1st) v ${rows[3].team} (4th). Semi-final 2: ${rows[1].team} (2nd) v ${rows[2].team} (3rd). The winners meet in the final.`
-        : `Final: ${rows[0].team} (1st) v ${rows[1].team} (2nd).`;
+      ? `Semi-final 1: ${rows[0].team} (1st) v ${rows[3].team} (4th). Semi-final 2: ${rows[1].team} (2nd) v ${rows[2].team} (3rd). The winners meet in the final.`
+      : `Final: ${rows[0].team} (1st) v ${rows[1].team} (2nd).`;
     body.querySelectorAll('[data-ko]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.ko === type)));
   };
   desc();

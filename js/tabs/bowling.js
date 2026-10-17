@@ -78,3 +78,4 @@ RENDER.bowling = function renderBowling() {
   }
   $('#o-bowl-t').innerHTML = out.join('');
 };
+

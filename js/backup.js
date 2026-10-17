@@ -45,8 +45,8 @@ function updateStatus() {
     return;
   }
   el.textContent = last
-      ? `Last backup: ${when(last)}. This browser now holds ${what}.`
-      : `No backup yet. This browser holds ${what}, and nothing else has a copy.`;
+    ? `Last backup: ${when(last)}. This browser now holds ${what}.`
+    : `No backup yet. This browser holds ${what}, and nothing else has a copy.`;
 }
 
 function backupNow() {
@@ -156,8 +156,8 @@ function restoreDialog() {
       mode = m.dataset.mode;
       body.querySelectorAll('[data-mode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === mode)));
       $('#rs-mode-note', body).textContent = mode === 'merge'
-          ? 'Adds the backup\'s players, matches, squads, tournaments and earlier stats. Where both have the same one, the newer copy wins. Your settings stay as they are.'
-          : 'Deletes everything Crease keeps in this browser, including any match in progress, and puts the backup in its place.';
+        ? 'Adds the backup\'s players, matches, squads, tournaments and earlier stats. Where both have the same one, the newer copy wins. Your settings stay as they are.'
+        : 'Deletes everything Crease keeps in this browser, including any match in progress, and puts the backup in its place.';
       ok.className = 'btn' + (mode === 'replace' ? ' solid-danger' : '');
       ok.textContent = mode === 'replace' ? 'Replace everything' : 'Restore';
     }

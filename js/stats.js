@@ -206,9 +206,9 @@ export function pointsTable(t, matches) {
   }
   const nrrCmp = (x, y) => (y.nrr ?? -99) - (x.nrr ?? -99);
   out.sort((x, y) => y.pts - x.pts
-      || (tb === 'wins' ? y.w - x.w : 0)
-      || (tb === 'h2h' ? y.h2h - x.h2h : 0)
-      || nrrCmp(x, y) || y.w - x.w || x.team.localeCompare(y.team));
+    || (tb === 'wins' ? y.w - x.w : 0)
+    || (tb === 'h2h' ? y.h2h - x.h2h : 0)
+    || nrrCmp(x, y) || y.w - x.w || x.team.localeCompare(y.team));
   return out;
 }
 

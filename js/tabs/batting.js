@@ -88,3 +88,4 @@ RENDER.batting = function renderBatting() {
   }
   $('#o-bat-t').innerHTML = out.join('');
 };
+

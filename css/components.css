@@ -205,8 +205,8 @@
   border-radius: var(--r);
   padding: 18px 20px;
   background:
-          linear-gradient(180deg, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
-          #07100d;
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
+    #07100d;
   border: 1px solid #23392f;
   color: #eaf3ee;
   overflow: hidden;

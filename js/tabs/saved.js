@@ -134,3 +134,4 @@ $('#saved-clear').addEventListener('click', async () => {
     store.set('players', []); store.set('matches', []); RENDER.saved(); toast('Saved items cleared');
   }
 });
+

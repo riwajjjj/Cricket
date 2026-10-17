@@ -816,8 +816,8 @@ export function liveHTML(animateLast) {
   const lockPad = i.needBowler;
   const overNo = Math.floor(i.balls / 6) + (i.needBowler ? 1 : 1);
   const strip = !i.needBowler && over.balls.length
-      ? over.balls.map((b, k) => chip(b, animateLast && k === over.balls.length - 1)).join('')
-      : `<span class="empty-over">${i.needBowler ? 'Over complete' : 'New over'}</span>`;
+    ? over.balls.map((b, k) => chip(b, animateLast && k === over.balls.length - 1)).join('')
+    : `<span class="empty-over">${i.needBowler ? 'Over complete' : 'New over'}</span>`;
   const prevBowler = i.lastBowler >= 0 ? i.bowlers[i.lastBowler] : null;
   const bowlerOpts = i.bowlers.filter((b, k) => k !== i.lastBowler).map(b => `<option value="${esc(b.name)}"></option>`).join('');
   const prompt = i.needBowler ? `<div class="card prompt-card">
@@ -991,8 +991,8 @@ export function breakHTML() {
   const batTeam = test ? nextBatTeam() : 1 - live.inns[0].bat;
   const t2 = live.teams[batTeam];
   const title = test
-      ? `${ORD[n]} innings: ${t2} to bat${n === 3 ? `, needing ${testNeed(batTeam)} to win` : ''}`
-      : chaseTitle(t2, plannedChase());
+    ? `${ORD[n]} innings: ${t2} to bat${n === 3 ? `, needing ${testNeed(batTeam)} to win` : ''}`
+    : chaseTitle(t2, plannedChase());
   const fo = test && nx.canFollowOn ? `<div class="modal-block"><p class="modal-sub">${esc(live.teams[live.inns[0].bat])} lead by ${plural(nx.lead, 'run')}, so they can enforce the follow-on</p>
     <div class="seg"><button type="button" data-act="fo" data-v="0" aria-pressed="${!followOn}">${esc(live.teams[live.inns[0].bat])} bat again</button><button type="button" data-act="fo" data-v="1" aria-pressed="${followOn}">Enforce the follow-on: ${esc(live.teams[live.inns[1].bat])} bat again</button></div></div>` : '';
   const bsq = sqOf(live, batTeam), fsq = sqOf(live, 1 - batTeam);
@@ -1003,7 +1003,7 @@ export function breakHTML() {
     ${fo}
     <div class="setup-grid">
       ${(bsq ? selectField('l2-s', 'Striker', opts(bsq, batTeam), bsq[0]) + selectField('l2-ns', 'Non-striker', opts(bsq, batTeam), bsq[1]) : liveField('l2-s', 'Striker', 'Batter 1') + liveField('l2-ns', 'Non-striker', 'Batter 2'))
-  + (fsq ? selectField('l2-bw', 'Opening bowler', opts(fsq, 1 - batTeam), fsq[fsq.length - 1]) : liveField('l2-bw', 'Opening bowler', ''))}
+        + (fsq ? selectField('l2-bw', 'Opening bowler', opts(fsq, 1 - batTeam), fsq[fsq.length - 1]) : liveField('l2-bw', 'Opening bowler', ''))}
       ${!test && live.overs ? liveField('l2-lost', 'Overs lost before the chase', '0', { im: 'decimal', max: 5 }) : ''}
     </div>
     ${!test && live.overs ? '<p class="hint" id="l2-dls">If rain takes overs off the chase before it starts, enter them and the target is revised.</p>' : ''}
@@ -1130,11 +1130,11 @@ export function scorecardHTML(m, idx) {
     ${i.fow.length ? `<p class="sc-meta">Fall of wickets: ${i.fow.map(w => `${w.score}-${w.wkt} (${esc(w.name)}, ${w.over} ov)`).join(', ')}</p>` : ''}
     ${partsHTML(m, i)}
     ${(() => {
-    const ov = i.overs.filter(o => o.balls.length);
-    if (!ov.length) return '';
-    const edit = m === live && canEdit();
-    return `<details class="bbb"><summary>Ball by ball${edit ? ' · tap a ball to fix it' : ''}</summary><div class="tbl-wrap"><table class="tbl"><tbody>${ov.map(o => `<tr><td class="dim">Ov ${i.overs.indexOf(o) + 1}</td><td>${esc(i.bowlers[o.bowler]?.name || '')}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true, m)).join('')}</span></td><td class="num"><b>${o.runs}</b></td></tr>`).join('')}</tbody></table></div></details>`;
-  })()}
+      const ov = i.overs.filter(o => o.balls.length);
+      if (!ov.length) return '';
+      const edit = m === live && canEdit();
+      return `<details class="bbb"><summary>Ball by ball${edit ? ' · tap a ball to fix it' : ''}</summary><div class="tbl-wrap"><table class="tbl"><tbody>${ov.map(o => `<tr><td class="dim">Ov ${i.overs.indexOf(o) + 1}</td><td>${esc(i.bowlers[o.bowler]?.name || '')}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true, m)).join('')}</span></td><td class="num"><b>${o.runs}</b></td></tr>`).join('')}</tbody></table></div></details>`;
+    })()}
     ${bowls ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th><th class="num">Dots</th><th class="num">Wd/Nb</th></tr></thead><tbody>${bowls}</tbody></table></div>` : ''}
   </div>`;
 }
@@ -1155,12 +1155,12 @@ export function liveCharts(m) {
   chart('c-live-manhattan', {
     type: 'bar',
     data: { labels, datasets: m.inns.map((i, k) => ({
-        label: innLabel(i, k),
-        data: labels.map((_, j) => perInn[k][j] ? perInn[k][j].runs : null),
-        backgroundColor: cols[k].startsWith('#') ? alpha(cols[k], 0.8) : cols[k],
-        borderColor: labels.map((_, j) => perInn[k][j] && perInn[k][j].wkts ? p.ball : 'rgba(0,0,0,0)'),
-        borderWidth: 2, borderRadius: 4, maxBarThickness: 26,
-      })) },
+      label: innLabel(i, k),
+      data: labels.map((_, j) => perInn[k][j] ? perInn[k][j].runs : null),
+      backgroundColor: cols[k].startsWith('#') ? alpha(cols[k], 0.8) : cols[k],
+      borderColor: labels.map((_, j) => perInn[k][j] && perInn[k][j].wkts ? p.ball : 'rgba(0,0,0,0)'),
+      borderWidth: 2, borderRadius: 4, maxBarThickness: 26,
+    })) },
     options: baseOpts({ scales: axes({ x: 'Over', y: 'Runs' }), plugins: { tooltip: { callbacks: { afterLabel: c => { const o = perInn[c.datasetIndex][c.dataIndex]; return o && o.wkts ? `${plural(o.wkts, 'wicket')}` : ''; } } } } }),
   });
   const wl = Array.from({ length: maxO + 1 }, (_, k) => String(k));
@@ -1185,9 +1185,9 @@ export function liveCharts(m) {
     chart('c-live-wp', {
       type: 'line',
       data: { labels: wp.map(x => x.l), datasets: [
-          { label: `${t2} win chance`, data: wp.map(x => x.p), borderColor: p.fg2, borderWidth: 2.5, pointRadius: 3, pointBackgroundColor: p.fg2, tension: 0.25, fill: { target: { value: 50 }, above: alpha(p.sky, 0.28), below: alpha(p.accent, 0.28) } },
-          { label: 'Even', data: wp.map(() => 50), borderColor: p.line2, borderDash: [4, 4], borderWidth: 1, pointRadius: 0, fill: false },
-        ] },
+        { label: `${t2} win chance`, data: wp.map(x => x.p), borderColor: p.fg2, borderWidth: 2.5, pointRadius: 3, pointBackgroundColor: p.fg2, tension: 0.25, fill: { target: { value: 50 }, above: alpha(p.sky, 0.28), below: alpha(p.accent, 0.28) } },
+        { label: 'Even', data: wp.map(() => 50), borderColor: p.line2, borderDash: [4, 4], borderWidth: 1, pointRadius: 0, fill: false },
+      ] },
       options: baseOpts({ interaction: { mode: 'index', intersect: false }, scales: ax, plugins: { legend: { display: false }, tooltip: { filter: c => c.datasetIndex === 0, callbacks: { title: it => `After ${it[0].label} overs`, label: c => ` ${t2} ${c.parsed.y}%  ·  ${t1} ${Math.round((100 - c.parsed.y) * 10) / 10}%` } } } }),
     });
   }
@@ -1303,7 +1303,7 @@ function wagonCard(m) {
 /* ---------- Match-ups ---------- */
 function matchupsCard(i) {
   const rows = Object.entries(i.mu || {}).map(([k, v]) => { const [bi, ti] = k.split('|').map(Number); return { ...v, bowler: i.bowlers[bi]?.name || '?', batter: i.batters[ti]?.name || '?' }; })
-      .filter(r => r.balls || r.outs).sort((a, b) => b.balls - a.balls).slice(0, 8);
+    .filter(r => r.balls || r.outs).sort((a, b) => b.balls - a.balls).slice(0, 8);
   if (!rows.length) return '';
   return `<div class="card"><h2 class="card-title">Match-ups</h2><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Batter</th><th>Bowler</th><th class="num">R</th><th class="num">B</th><th class="num">SR</th><th class="num">Dots</th><th class="num">Out</th></tr></thead><tbody>
     ${rows.map(r => `<tr><td>${esc(r.batter)}</td><td>${esc(r.bowler)}</td><td class="num"><b>${r.runs}</b></td><td class="num">${r.balls}</td><td class="num">${r.balls ? nf(r.runs / r.balls * 100, 1) : '—'}</td><td class="num">${r.dots}</td><td class="num">${r.outs ? `<span class="neg">${r.outs}</span>` : '—'}</td></tr>`).join('')}
