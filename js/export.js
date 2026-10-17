@@ -78,20 +78,24 @@ export async function shareImage(d) {
   x.fillStyle = '#5f7569'; x.font = `500 18px ${Bf}`; x.fillText(`Made with Crease · ${new Date().toLocaleDateString()}`, 60, H - 34);
   c.toBlob(blob => {
     if (!blob) { toast('Could not create the image'); return; }
-    const url = URL.createObjectURL(blob);
-    const body = openModal('Share image', `<img class="img-preview" src="${url}" alt="Shareable stat card">
-      <p class="hint">If the download button does nothing in this view, right-click or long-press the image to save it.</p>
-      <div class="modal-actions"><button type="button" class="btn ghost" data-x="copy">Copy image</button><button type="button" class="btn" data-x="dl">Download PNG</button></div>`, { wide: true, onClose: () => setTimeout(() => URL.revokeObjectURL(url), 1000) });
-    body.addEventListener('click', async e => {
-      const b = e.target.closest('[data-x]');
-      if (!b) return;
-      if (b.dataset.x === 'dl') download('crease-stats.png', blob);
-      else {
-        try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); toast('Image copied'); }
-        catch { toast('Copying images is blocked here. Right-click or long-press the image instead.'); }
-      }
-    });
+    showImageModal(blob, 'crease-stats.png', 'Share image', 'Shareable stat card');
   }, 'image/png');
+}
+// Preview an image with download and copy buttons.
+export function showImageModal(blob, filename, title = 'Share image', alt = 'Image') {
+  const url = URL.createObjectURL(blob);
+  const body = openModal(title, `<img class="img-preview" src="${url}" alt="${esc(alt)}">
+    <p class="hint">If the download button does nothing in this view, right-click or long-press the image to save it.</p>
+    <div class="modal-actions"><button type="button" class="btn ghost" data-x="copy">Copy image</button><button type="button" class="btn" data-x="dl">Download PNG</button></div>`, { wide: true, onClose: () => setTimeout(() => URL.revokeObjectURL(url), 1000) });
+  body.addEventListener('click', async e => {
+    const b = e.target.closest('[data-x]');
+    if (!b) return;
+    if (b.dataset.x === 'dl') download(filename, blob);
+    else {
+      try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); toast('Image copied'); }
+      catch { toast('Copying images is blocked here. Right-click or long-press the image instead.'); }
+    }
+  });
 }
 
 export function shareDataFor(tab) {
@@ -99,34 +103,33 @@ export function shareDataFor(tab) {
   if (tab === 'batting') {
     const { v } = readGroup('bat'); const s = batStats(v);
     return { eyebrow: `${f.label} batting`, title: v.name || 'Batting summary', subtitle: `${s.R} runs off ${s.B} balls in ${plural(s.I, 'innings', 'innings')}`, stats: [
-      { label: 'Strike rate', value: nf(s.sr), sub: s.sr != null ? RATINGS[rate(s.sr, f.sr)] : '' },
-      { label: 'Average', value: nf(s.avg) },
-      { label: 'Boundary %', value: s.bdry != null ? nf(s.bdry, 1) + '%' : '—' },
-      { label: 'Balls per boundary', value: nf(s.bpb, 1) },
-      { label: 'Dot-ball %', value: s.dot != null ? nf(s.dot, 1) + '%' : '—' },
-      { label: '50s / 100s', value: `${s.fifties} / ${s.hundreds}` },
-    ] };
+        { label: 'Strike rate', value: nf(s.sr), sub: s.sr != null ? RATINGS[rate(s.sr, f.sr)] : '' },
+        { label: 'Average', value: nf(s.avg) },
+        { label: 'Boundary %', value: s.bdry != null ? nf(s.bdry, 1) + '%' : '—' },
+        { label: 'Balls per boundary', value: nf(s.bpb, 1) },
+        { label: 'Dot-ball %', value: s.dot != null ? nf(s.dot, 1) + '%' : '—' },
+        { label: '50s / 100s', value: `${s.fifties} / ${s.hundreds}` },
+      ] };
   }
   if (tab === 'bowling') {
     const { v } = readGroup('bowl'); const s = bowlStats(v);
     return { eyebrow: `${f.label} bowling`, title: v.name || 'Bowling summary', subtitle: `${s.W}/${s.R} in ${fmtOvers(s.balls)} overs`, stats: [
-      { label: 'Economy', value: nf(s.econ), sub: s.econ != null ? RATINGS[rate(s.econ, f.econ, false)] : '' },
-      { label: 'Average', value: nf(s.avg) },
-      { label: 'Strike rate', value: nf(s.sr, 1) },
-      { label: 'Dot-ball %', value: s.dot != null ? nf(s.dot, 1) + '%' : '—' },
-      { label: 'Maidens', value: String(s.M) },
-      { label: 'Wickets', value: String(s.W) },
-    ] };
+        { label: 'Economy', value: nf(s.econ), sub: s.econ != null ? RATINGS[rate(s.econ, f.econ, false)] : '' },
+        { label: 'Average', value: nf(s.avg) },
+        { label: 'Strike rate', value: nf(s.sr, 1) },
+        { label: 'Dot-ball %', value: s.dot != null ? nf(s.dot, 1) + '%' : '—' },
+        { label: 'Maidens', value: String(s.M) },
+        { label: 'Wickets', value: String(s.W) },
+      ] };
   }
   if (tab === 'impact') {
     RENDER.impact();
     const d = impactShare;
     return { eyebrow: `${f.label} impact`, title: 'Match impact ratings', subtitle: `${d.r} off ${d.b} with the bat · ${d.wk}/${d.rc} in ${fmtOvers(d.balls)} overs`, stats: [
-      { label: 'Batting impact', value: d.batScore != null ? String(Math.round(d.batScore)) : '—', sub: d.batScore != null ? verdictFor(d.batScore) : '' },
-      { label: 'Bowling impact', value: d.bowlScore != null ? String(Math.round(d.bowlScore)) : '—', sub: d.bowlScore != null ? verdictFor(d.bowlScore) : '' },
-      { label: 'Combined', value: d.batScore != null && d.bowlScore != null ? String(Math.round((d.batScore + d.bowlScore) / 2)) : '—', sub: 'Average of both' },
-    ] };
+        { label: 'Batting impact', value: d.batScore != null ? String(Math.round(d.batScore)) : '—', sub: d.batScore != null ? verdictFor(d.batScore) : '' },
+        { label: 'Bowling impact', value: d.bowlScore != null ? String(Math.round(d.bowlScore)) : '—', sub: d.bowlScore != null ? verdictFor(d.bowlScore) : '' },
+        { label: 'Combined', value: d.batScore != null && d.bowlScore != null ? String(Math.round((d.batScore + d.bowlScore) / 2)) : '—', sub: 'Average of both' },
+      ] };
   }
   return null;
 }
-

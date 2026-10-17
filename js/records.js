@@ -14,7 +14,7 @@ export const finishedMatches = () => {
 export const careerBase = () => { const v = store.get('careerBase', {}); return v && typeof v === 'object' ? v : {}; };
 
 const blankBat = () => ({ inns: 0, no: 0, runs: 0, balls: 0, f4: 0, f6: 0, dots: 0, fifties: 0, hundreds: 0, ducks: 0, hs: -1, hsNo: false });
-const blankBowl = () => ({ balls: 0, runs: 0, wkts: 0, maidens: 0, dots: 0, wd: 0, nb: 0, fourW: 0, bestW: -1, bestR: 0, types: { bowled: 0, caught: 0, lbw: 0, stumped: 0, other: 0 } });
+const blankBowl = () => ({ balls: 0, runs: 0, wkts: 0, maidens: 0, dots: 0, wd: 0, nb: 0, fourW: 0, fiveW: 0, bestW: -1, bestR: 0, types: { bowled: 0, caught: 0, lbw: 0, stumped: 0, other: 0 } });
 const blankField = () => ({ ct: 0, st: 0, ro: 0 });
 
 // Older matches only have dismissal text; newer ones also store it structured.
@@ -100,6 +100,7 @@ export function buildRecords(matches = finishedMatches(), { includeBase = true, 
         const g = line(r), s = r.bowl;
         s.balls += w.balls; s.runs += w.runs; s.wkts += w.wkts; s.maidens += w.maidens; s.dots += w.dots; s.wd += w.wd; s.nb += w.nb;
         if (w.wkts >= 4) s.fourW++;
+        if (w.wkts >= 5) s.fiveW++;
         if (s.bestW < 0 || better(w.wkts, w.runs, s.bestW, s.bestR)) { s.bestW = w.wkts; s.bestR = w.runs; }
         g.bowl = { balls: w.balls, r: w.runs, w: w.wkts };
       }
@@ -131,7 +132,7 @@ function combine(r) {
   const hsB = String(bb.hs ?? '').match(/^(\d+)(\*)?$/);
   if (hsB && (Number(hsB[1]) > bat.hs || (Number(hsB[1]) === bat.hs && hsB[2]))) { bat.hs = Number(hsB[1]); bat.hsNo = !!hsB[2]; }
   const bowl = { ...r.bowl, types: { ...r.bowl.types } };
-  ['balls', 'runs', 'wkts', 'maidens', 'dots', 'wd', 'nb', 'fourW'].forEach(k => { bowl[k] += n(bw[k]); });
+  ['balls', 'runs', 'wkts', 'maidens', 'dots', 'wd', 'nb', 'fourW', 'fiveW'].forEach(k => { bowl[k] += n(bw[k]); });
   const hasBalls = n(bw.balls) > 0, hasRuns = bw.runs !== undefined && bw.runs !== '', hasWk = n(bw.wkts) > 0;
   bowl.econRuns = r.bowl.runs + (hasBalls ? n(bw.runs) : 0);
   bowl.econBalls = r.bowl.balls + (hasBalls ? n(bw.balls) : 0);
@@ -163,4 +164,63 @@ export function bowlFigures(s) {
     sr: sW > 0 ? sB / sW : null,
     best: s.bestW < 0 ? '—' : `${s.bestW}/${s.bestR}`,
   };
+}
+
+/* ---------- Milestones ----------
+   Walks through finished matches in the order they were played and notes 50s, 100s, four- and
+   five-wicket hauls, 50- and 100-run partnerships, and career landmarks (runs, wickets, matches).
+   Career landmarks count on from any earlier stats entered by hand. Newest first. */
+const RUN_MARKS = [250, 500, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 7500, 10000];
+const WKT_MARKS = [25, 50, 75, 100, 150, 200, 250, 300, 400, 500];
+const APP_MARKS = [10, 25, 50, 75, 100, 150, 200, 250];
+const ORDN = k => { const s = ['th', 'st', 'nd', 'rd'], v = k % 100; return k + (s[(v - 20) % 10] || s[v] || s[0]); };
+export function milestones(matches = finishedMatches(), base = careerBase()) {
+  const out = [];
+  const tot = new Map();
+  const T = k => {
+    let t = tot.get(k);
+    if (!t) { const b = base[k] || {}; t = { runs: n(b.bat?.runs), wkts: n(b.bowl?.wkts), apps: n(b.matches) }; tot.set(k, t); }
+    return t;
+  };
+  const when = m => m.data.created || m.savedAt || 0;
+  const crossed = (from, to, marks) => marks.filter(x => from < x && to >= x);
+  [...matches].sort((a, b) => when(a) - when(b)).forEach((m, order) => {
+    const d = m.data, date = when(m);
+    const ev = (key, name, kind, text, size) => out.push({ key, name, kind, text, size, date, order, matchId: m.id, title: m.title });
+    // Who played: squads if entered, otherwise everyone who batted or bowled.
+    const played = new Map();
+    const add = (name, team) => { const k = nameKey(name); if (k && !played.has(k)) played.set(k, { name: String(name).trim(), team }); };
+    (d.squads || []).forEach((sq, t) => (sq || []).forEach(nm => add(nm, t)));
+    d.inns.forEach(inn => { inn.batters.forEach(b => add(b.name, inn.bat)); inn.bowlers.forEach(w => { if (w.balls || w.runs) add(w.name, 1 - inn.bat); }); });
+    for (const [k, p] of played) {
+      const t = T(k), before = t.apps; t.apps++;
+      crossed(before, t.apps, APP_MARKS).forEach(x => ev(k, p.name, 'apps', `${p.name} plays a ${ORDN(x)} match`, 1));
+    }
+    d.inns.forEach(inn => {
+      const opp = d.teams[1 - inn.bat], bt = d.teams[inn.bat];
+      inn.batters.forEach(b => {
+        const k = nameKey(b.name); if (!k) return;
+        const sc = `${b.runs}${b.out ? '' : '*'} (${b.balls})`;
+        if (b.runs >= 100) ev(k, b.name, '100', `${b.name} ${sc} v ${opp}`, 4);
+        else if (b.runs >= 50) ev(k, b.name, '50', `${b.name} ${sc} v ${opp}`, 2);
+        const t = T(k), before = t.runs; t.runs += b.runs;
+        crossed(before, t.runs, RUN_MARKS).forEach(x => ev(k, b.name, 'runs', `${b.name} passes ${x.toLocaleString('en-US')} career runs`, 3));
+      });
+      inn.bowlers.forEach(w => {
+        const k = nameKey(w.name); if (!k || !(w.balls || w.runs)) return;
+        if (w.wkts >= 5) ev(k, w.name, '5w', `${w.name} ${w.wkts}/${w.runs} v ${bt}`, 4);
+        else if (w.wkts === 4) ev(k, w.name, '4w', `${w.name} 4/${w.runs} v ${bt}`, 2);
+        const t = T(k), before = t.wkts; t.wkts += w.wkts;
+        crossed(before, t.wkts, WKT_MARKS).forEach(x => ev(k, w.name, 'wkts', `${w.name} takes a ${ORDN(x)} career wicket`, 3));
+      });
+      (Array.isArray(inn.parts) ? inn.parts : []).forEach(p => {
+        if (p.runs < 50) return;
+        const [x, y] = p.p.map(j => inn.batters[j]?.name).filter(Boolean);
+        if (!x || !y) return;
+        const kind = p.runs >= 100 ? '100p' : '50p';
+        ev(nameKey(x) + '|' + nameKey(y), `${x} & ${y}`, kind, `${x} & ${y} add ${p.runs} for the ${ORDN(p.w)} wicket v ${opp}`, p.runs >= 100 ? 3 : 1);
+      });
+    });
+  });
+  return out.sort((a, b) => b.date - a.date || b.order - a.order || b.size - a.size);
 }

@@ -205,8 +205,8 @@
   border-radius: var(--r);
   padding: 18px 20px;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
-    #07100d;
+          linear-gradient(180deg, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
+          #07100d;
   border: 1px solid #23392f;
   color: #eaf3ee;
   overflow: hidden;
@@ -599,3 +599,60 @@ details.bbb summary:hover { color: var(--fg); }
 .ww-bat { fill: var(--fg); }
 .ww-lbl { font: 700 10px/1 var(--f-body); fill: var(--muted); letter-spacing: 0.12em; paint-order: stroke; stroke: color-mix(in srgb, var(--turf) 16%, var(--surface)); stroke-width: 3px; stroke-linejoin: round; }
 @media (max-width: 760px) { .ww-layout { grid-template-columns: minmax(0, 1fr); justify-items: center; } .ww-layout .bars { width: 100%; } }
+
+/* ---------- Tournament: qualification line, knockouts ---------- */
+.tbl tr.q-line td { border-bottom: 2px dashed color-mix(in srgb, var(--accent) 65%, transparent); }
+.fx-no.wide { width: auto; min-width: 26px; padding: 0 7px; }
+.fx-cap { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-text); margin-bottom: 2px; }
+.champ { display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; margin-bottom: 6px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+.champ span { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent-text); }
+.champ b { font: 800 1.6rem/1.1 var(--f-display); letter-spacing: 0.02em; }
+.champ em { font-style: normal; font-size: 0.85rem; color: var(--muted); }
+
+/* ---------- Players: milestones and best performances ---------- */
+.ms-list, .best-list { list-style: none; margin: 0; padding: 0; }
+.ms-item { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line); }
+.ms-item:first-child { border-top: 0; }
+.ms-ic { height: 26px; border-radius: 7px; display: grid; place-items: center; font: 700 0.72rem/1 var(--f-body); background: var(--raise); color: var(--fg-2); }
+.ms-100 .ms-ic, .ms-5w .ms-ic, .ms-100p .ms-ic { background: var(--accent); color: var(--accent-ink); }
+.ms-50 .ms-ic, .ms-4w .ms-ic, .ms-50p .ms-ic { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-text); }
+.ms-runs .ms-ic, .ms-wkts .ms-ic { background: color-mix(in srgb, var(--turf) 16%, transparent); color: var(--turf); }
+.ms-txt { font-size: 0.9rem; min-width: 0; overflow-wrap: anywhere; }
+.ms-date { font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
+.best-list li { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 6px 0; border-top: 1px solid var(--line); }
+.best-list li:first-child { border-top: 0; }
+.best-list b { font: 700 1.15rem/1.1 var(--f-display); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.best-list b small { font: 500 0.8rem var(--f-body); color: var(--muted); }
+.best-list span { font-size: 0.8rem; color: var(--muted); text-align: right; min-width: 0; overflow-wrap: anywhere; }
+
+/* ---------- Backup reminder ---------- */
+.nudge { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 55; width: min(560px, calc(100vw - 32px)); display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 12px 14px; border-radius: 14px; background: var(--raise); border: 1px solid var(--line-2); box-shadow: var(--shadow); }
+.nudge p { margin: 0; flex: 1 1 240px; font-size: 0.88rem; color: var(--fg-2); }
+.nudge p strong { color: var(--fg); }
+.nudge-acts { display: flex; gap: 8px; }
+
+/* ---------- Printing a scorecard ---------- */
+#print-area { display: none; }
+@media print {
+  body.printing > *:not(#print-area) { display: none !important; }
+  body.printing::before, body.printing::after { display: none !important; }
+  body.printing { background: #fff !important; color: #111; min-height: 0; }
+  body.printing #print-area {
+    display: block;
+    --fg: #111; --fg-2: #222; --muted: #555; --line: #ccc; --line-2: #bbb; --surface: #fff; --surface-2: #fff; --raise: #eee;
+    --accent: #c99a1c; --accent-text: #7a5600; --turf: #176b43; --ball: #b0281f;
+    color: #111; font: 400 10.5pt/1.4 var(--f-body);
+  }
+  #print-area h1 { font-size: 20pt; margin: 0 0 4pt; }
+  #print-area .pa-result { font-weight: 700; font-size: 12pt; margin: 0 0 2pt; }
+  #print-area .pa-meta { color: #555; margin: 0 0 12pt; }
+  #print-area .card { background: #fff; border: 1px solid #ccc; box-shadow: none; break-inside: avoid-page; }
+  #print-area .scorecard + .scorecard { margin-top: 12pt; }
+  #print-area details.bbb:not(.parts) { display: none; }
+  #print-area .tbl th, #print-area .tbl td { color: #111; }
+  #print-area .dim { color: #666; }
+}
+.hint.bad-text { color: var(--ball); }
+.tbl td.q-team { white-space: normal; min-width: 160px; width: 100%; }
+.q-need { margin-top: 2px; font-size: 0.82rem; line-height: 1.4; color: var(--fg-2); max-width: 70ch; }
+.q-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

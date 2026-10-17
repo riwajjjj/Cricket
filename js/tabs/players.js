@@ -1,7 +1,7 @@
 /* Crease — Players tab: career records built from scored matches, plus earlier stats entered by hand. */
 import { persistGroup, setGroup } from '../groups.js';
 import { fmtOvers, parseOvers } from '../maths.js';
-import { batFigures, bowlFigures, buildRecords, careerBase, finishedMatches, nameKey } from '../records.js';
+import { batFigures, bowlFigures, buildRecords, careerBase, finishedMatches, milestones, nameKey } from '../records.js';
 import { RENDER, showTab } from '../router.js';
 import { closeModal, confirmBox, openModal, toast } from '../ui.js';
 import { $, esc, nf, plural, store } from '../utils.js';
@@ -16,7 +16,7 @@ const COLS = {
   ],
   bowl: [
     ['name', 'Player'], ['team', 'Team'], ['m', 'M', 1], ['ov', 'Overs', 1], ['wkts', 'Wkts', 1], ['runs', 'Runs', 1], ['best', 'Best', 1],
-    ['avg', 'Avg', 1], ['econ', 'Econ', 1], ['sr', 'SR', 1], ['fourW', '4w+', 1],
+    ['avg', 'Avg', 1], ['econ', 'Econ', 1], ['sr', 'SR', 1], ['fourW', '4w+', 1], ['fiveW', '5w', 1],
   ],
   field: [['name', 'Player'], ['team', 'Team'], ['m', 'M', 1], ['ct', 'Catches', 1], ['st', 'Stumpings', 1], ['ro', 'Run outs', 1], ['total', 'Total', 1]],
 };
@@ -27,7 +27,7 @@ function rowsFor(map) {
     return {
       r, key: r.key, name: r.name, team: [...r.teams].join(', '), m: t.matches,
       inns: t.bat.inns, no: t.bat.no, runs: t.bat.runs, hs: t.bat.hs, hsTxt: bf.hs, avg: bf.avg, sr: bf.sr, h: t.bat.hundreds, f: t.bat.fifties, f4: t.bat.f4, f6: t.bat.f6,
-      ov: t.bowl.balls, wkts: t.bowl.wkts, bRuns: t.bowl.runs, best: t.bowl.bestW * 1000 - t.bowl.bestR, bestTxt: wf.best, bAvg: wf.avg, econ: wf.econ, bSr: wf.sr, fourW: t.bowl.fourW,
+      ov: t.bowl.balls, wkts: t.bowl.wkts, bRuns: t.bowl.runs, best: t.bowl.bestW * 1000 - t.bowl.bestR, bestTxt: wf.best, bAvg: wf.avg, econ: wf.econ, bSr: wf.sr, fourW: t.bowl.fourW, fiveW: t.bowl.fiveW,
       ct: t.field.ct, st: t.field.st, ro: t.field.ro, total: t.field.ct + t.field.st + t.field.ro,
       hasBat: t.bat.inns > 0, hasBowl: t.bowl.balls > 0, hasField: t.field.ct + t.field.st + t.field.ro > 0,
     };
@@ -72,8 +72,8 @@ RENDER.players = function renderPlayers() {
   $$seg();
   const v = ui.view;
   rows = rows.filter(r => (v === 'bat' ? r.hasBat : v === 'bowl' ? r.hasBowl : r.hasField))
-    .filter(r => !ui.q || r.key.includes(nameKey(ui.q)))
-    .filter(r => !ui.team || r.r.teams.has(ui.team));
+      .filter(r => !ui.q || r.key.includes(nameKey(ui.q)))
+      .filter(r => !ui.team || r.r.teams.has(ui.team));
   const [sk, dir] = ui.sort[v];
   rows.sort((a, b) => {
     const x = sortVal(a, sk, v), y = sortVal(b, sk, v);
@@ -81,12 +81,13 @@ RENDER.players = function renderPlayers() {
     if (x == null || y == null) return x == null && y == null ? a.name.localeCompare(b.name) : x == null ? 1 : -1; // blanks always last
     return (x === y ? a.name.localeCompare(b.name) : (x - y) * dir);
   });
+  renderMilestones();
   const cols = COLS[v];
   const tbl = $('#pl-tbl');
   const nMatches = filteredMatches().length;
   $('#pl-summary').textContent = all.length
-    ? `${plural(nMatches, 'finished match', 'finished matches')}${ui.format ? ` in ${ui.format}` : ''} · ${plural(rows.length, 'player')} shown${ui.format ? ' · earlier stats are only included under All formats' : ''}`
-    : 'No finished matches yet.';
+      ? `${plural(nMatches, 'finished match', 'finished matches')}${ui.format ? ` in ${ui.format}` : ''} · ${plural(rows.length, 'player')} shown${ui.format ? ' · earlier stats are only included under All formats' : ''}`
+      : 'No finished matches yet.';
   if (!rows.length) {
     tbl.innerHTML = `<tbody><tr><td class="empty-cell">${all.length || Object.keys(careerBase()).length ? 'No players match these filters.' : 'Records build themselves from matches you finish in the Live scorer. You can also add a player\'s earlier stats with “Add earlier stats”.'}</td></tr></tbody>`;
     return;
@@ -94,6 +95,22 @@ RENDER.players = function renderPlayers() {
   tbl.innerHTML = `<thead><tr>${cols.map(([k, l, num]) => `<th class="${num ? 'num' : ''}"><button type="button" class="th-sort${k === sk ? ' on' : ''}" data-sort="${k}" aria-label="Sort by ${esc(l)}">${esc(l)}${k === sk ? (dir < 0 ? ' ↓' : ' ↑') : ''}</button></th>`).join('')}</tr></thead>
     <tbody>${rows.map(r => `<tr>${cols.map(([k]) => cell(r, k, v)).join('')}</tr>`).join('')}</tbody>`;
 };
+const MS_ICON = { 100: '100', 50: '50', '5w': '5W', '4w': '4W', runs: 'R', wkts: 'W', apps: 'M', '100p': 'P', '50p': 'P' };
+const msItem = e => `<li class="ms-item ms-${esc(e.kind)}"><span class="ms-ic" aria-hidden="true">${MS_ICON[e.kind] || '★'}</span><span class="ms-txt">${esc(e.text)}</span><span class="ms-date">${e.date ? new Date(e.date).toLocaleDateString() : ''}</span></li>`;
+let msAll = false;
+// Recent landmarks from scored matches, for whoever is shown by the filters.
+function renderMilestones() {
+  const card = $('#pl-ms-card');
+  let ev = milestones(filteredMatches(), ui.format ? {} : careerBase());
+  if (ui.team) { const names = new Set([...buildRecords(filteredMatches(), { includeBase: false }).values()].filter(r => r.teams.has(ui.team)).map(r => r.key)); ev = ev.filter(e => e.key.split('|').some(k => names.has(k))); }
+  if (ui.q) { const q = nameKey(ui.q); ev = ev.filter(e => e.key.split('|').some(k => k.includes(q))); }
+  card.hidden = !ev.length;
+  if (!ev.length) return;
+  const shown = msAll ? ev : ev.slice(0, 8);
+  const big = ev.filter(e => ['100', '5w', '100p'].includes(e.kind)).length;
+  $('#pl-ms-sum').textContent = `${plural(ev.length, 'milestone')}${big ? ` · ${plural(big, 'hundred, five-for or hundred stand', 'hundreds, five-fors and hundred stands')}` : ''}`;
+  $('#pl-ms').innerHTML = `<ul class="ms-list">${shown.map(msItem).join('')}</ul>${ev.length > 8 ? `<button type="button" class="btn ghost sm" id="pl-ms-more" style="margin-top:10px">${msAll ? 'Show fewer' : `Show all ${ev.length}`}</button>` : ''}`;
+}
 function $$seg() { document.querySelectorAll('#pl-view [data-view]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === ui.view))); }
 
 /* ---------- Player detail ---------- */
@@ -123,21 +140,37 @@ function openPlayer(key) {
       </div></div>
     </div>
     ${(() => {
-      const tbl = (title, m, who) => {
-        const rows = [...m.values()].filter(x => x.balls || x.outs).sort((a, b) => b.balls - a.balls).slice(0, 6);
-        if (!rows.length) return '';
-        return `<div class="rec-block"><p class="modal-sub">${title}</p><table class="tbl"><thead><tr><th>${who}</th><th class="num">R</th><th class="num">B</th><th class="num">SR</th><th class="num">Out</th></tr></thead><tbody>${rows.map(x => `<tr><td>${esc(x.name)}</td><td class="num">${x.runs}</td><td class="num">${x.balls}</td><td class="num">${x.balls ? nf(x.runs / x.balls * 100, 1) : '—'}</td><td class="num">${x.outs || '—'}</td></tr>`).join('')}</tbody></table></div>`;
-      };
-      const a = tbl('Batting against', r.vsBowl, 'Bowler'), b = tbl('Bowling to', r.vsBat, 'Batter');
-      return a || b ? `<div class="grid-2" style="margin-top:14px">${a}${b}</div>` : '';
-    })()}
+    const tbl = (title, m, who) => {
+      const rows = [...m.values()].filter(x => x.balls || x.outs).sort((a, b) => b.balls - a.balls).slice(0, 6);
+      if (!rows.length) return '';
+      return `<div class="rec-block"><p class="modal-sub">${title}</p><table class="tbl"><thead><tr><th>${who}</th><th class="num">R</th><th class="num">B</th><th class="num">SR</th><th class="num">Out</th></tr></thead><tbody>${rows.map(x => `<tr><td>${esc(x.name)}</td><td class="num">${x.runs}</td><td class="num">${x.balls}</td><td class="num">${x.balls ? nf(x.runs / x.balls * 100, 1) : '—'}</td><td class="num">${x.outs || '—'}</td></tr>`).join('')}</tbody></table></div>`;
+    };
+    const a = tbl('Batting against', r.vsBowl, 'Bowler'), b = tbl('Bowling to', r.vsBat, 'Batter');
+    return a || b ? `<div class="grid-2" style="margin-top:14px">${a}${b}</div>` : '';
+  })()}
+    ${(() => {
+    const inns = r.games.filter(g => g.bat).sort((a, b) => b.bat.r - a.bat.r || Number(b.bat.out === false) - Number(a.bat.out === false)).slice(0, 3);
+    const spells = r.games.filter(g => g.bowl && g.bowl.balls).sort((a, b) => b.bowl.w - a.bowl.w || a.bowl.r - b.bowl.r).slice(0, 3);
+    const mine = milestones().filter(e => e.key.split('|').includes(r.key)).slice(0, 6);
+    if (!inns.length && !spells.length && !mine.length) return '';
+    const li = (main, sub) => `<li><b>${main}</b><span>${esc(sub)}</span></li>`;
+    const day = g => new Date(g.date).toLocaleDateString();
+    return `<div class="grid-2" style="margin-top:14px">
+        <div class="rec-block"><p class="modal-sub">Best performances</p><ul class="best-list">
+          ${inns.map(g => li(`${g.bat.r}${g.bat.out ? '' : '*'} <small>(${g.bat.b})</small>`, `${g.title} · ${day(g)}`)).join('')}
+          ${spells.map(g => li(`${g.bowl.w}/${g.bowl.r} <small>(${fmtOvers(g.bowl.balls)} ov)</small>`, `${g.title} · ${day(g)}`)).join('')}
+        </ul></div>
+        <div class="rec-block"><p class="modal-sub">Milestones</p>${mine.length ? `<ul class="ms-list">${mine.map(msItem).join('')}</ul>` : '<p class="hint" style="margin:0">None yet: 50s, 100s, four-wicket hauls, big partnerships and career landmarks appear here.</p>'}</div>
+      </div>`;
+  })()}
     ${base ? `<p class="hint">From scored matches: ${app.runs} runs, ${r.bowl.wkts} wickets. Earlier stats add ${Number(base.bat?.runs) || 0} runs and ${Number(base.bowl?.wkts) || 0} wickets.</p>` : ''}
     ${games ? `<p class="modal-sub" style="margin-top:16px">Recent scored matches</p><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Date</th><th>Match</th><th class="num">Batting</th><th class="num">Bowling</th><th class="num">Fielding</th></tr></thead><tbody>${games}</tbody></table></div>` : '<p class="hint">No scored matches yet: these figures are the earlier stats entered by hand.</p>'}
     <div class="modal-actions">
       <button type="button" class="btn ghost" data-x="base">${base ? 'Edit earlier stats' : 'Add earlier stats'}</button>
       ${t.bat.inns ? '<button type="button" class="btn ghost" data-x="bat">Open in Batting</button>' : ''}
       ${t.bowl.balls ? '<button type="button" class="btn ghost" data-x="bowl">Open in Bowling</button>' : ''}
-      ${t.bat.inns ? '<button type="button" class="btn ghost" data-x="cmpa">Compare as A</button><button type="button" class="btn ghost" data-x="cmpb">Compare as B</button>' : ''}
+      ${t.bat.inns ? `<button type="button" class="btn ghost" data-x="cmpa">Compare ${t.bowl.balls ? 'batting ' : ''}as A</button><button type="button" class="btn ghost" data-x="cmpb">${t.bowl.balls ? 'Batting ' : 'Compare '}as B</button>` : ''}
+      ${t.bowl.balls && !t.bowl.baseNoBalls ? `<button type="button" class="btn ghost" data-x="cmpwa">Compare ${t.bat.inns ? 'bowling ' : ''}as A</button><button type="button" class="btn ghost" data-x="cmpwb">${t.bat.inns ? 'Bowling ' : 'Compare '}as B</button>` : ''}
     </div>`, { wide: true });
   body.addEventListener('click', e => {
     const x = e.target.closest('[data-x]');
@@ -156,6 +189,10 @@ function openPlayer(key) {
     } else if (a === 'cmpa' || a === 'cmpb') {
       loadIntoCompare(a === 'cmpa' ? 'a' : 'b', { name: r.name, data: { runs: s.runs, balls: s.baseNoBalls ? '' : s.balls, inns: s.inns, no: s.no, f4: s.f4, f6: s.f6, fifties: s.fifties, hundreds: s.hundreds } });
       showTab('compare', { scrollTop: true });
+    } else if (a === 'cmpwa' || a === 'cmpwb') {
+      const w = t.bowl;
+      loadIntoCompare(a === 'cmpwa' ? 'a' : 'b', { kind: 'bowl', name: r.name, data: { overs: fmtOvers(w.balls), runs: w.runs, wkts: w.wkts, dots: w.dots, maidens: w.maidens, wd: w.wd, nb: w.nb } });
+      showTab('compare', { scrollTop: true });
     }
   });
 }
@@ -164,7 +201,7 @@ function openPlayer(key) {
 const BASE_FIELDS = [
   ['bat', 'inns', 'Innings'], ['bat', 'no', 'Not outs'], ['bat', 'runs', 'Runs'], ['bat', 'balls', 'Balls faced'], ['bat', 'f4', 'Fours'], ['bat', 'f6', 'Sixes'],
   ['bat', 'fifties', '50s'], ['bat', 'hundreds', '100s'], ['bat', 'ducks', 'Ducks'], ['bat', 'hs', 'Highest score', 'e.g. 87*'],
-  ['bowl', 'overs', 'Overs', 'e.g. 64.3'], ['bowl', 'maidens', 'Maidens'], ['bowl', 'runs', 'Runs conceded'], ['bowl', 'wkts', 'Wickets'], ['bowl', 'fourW', '4-wicket hauls'], ['bowl', 'best', 'Best bowling', 'e.g. 4/21'],
+  ['bowl', 'overs', 'Overs', 'e.g. 64.3'], ['bowl', 'maidens', 'Maidens'], ['bowl', 'runs', 'Runs conceded'], ['bowl', 'wkts', 'Wickets'], ['bowl', 'fourW', '4+ wicket hauls'], ['bowl', 'fiveW', '5-wicket hauls'], ['bowl', 'best', 'Best bowling', 'e.g. 4/21'],
   ['field', 'ct', 'Catches'], ['field', 'st', 'Stumpings'], ['field', 'ro', 'Run outs'],
 ];
 function baseForm(name) {
@@ -230,6 +267,7 @@ $('#pl-format').addEventListener('change', e => { ui.format = e.target.value; RE
 $('#pl-team').addEventListener('change', e => { ui.team = e.target.value; RENDER.players(); });
 $('#pl-view').addEventListener('click', e => { const b = e.target.closest('[data-view]'); if (b) { ui.view = b.dataset.view; RENDER.players(); } });
 $('#pl-add').addEventListener('click', () => baseForm(null));
+$('#pl-ms').addEventListener('click', e => { if (e.target.closest('#pl-ms-more')) { msAll = !msAll; renderMilestones(); } });
 $('#pl-tbl').addEventListener('click', e => {
   const s = e.target.closest('[data-sort]'), p = e.target.closest('[data-player]');
   if (s) {

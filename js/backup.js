@@ -5,6 +5,7 @@ import { download } from './export.js';
 import { RENDER } from './router.js';
 import { closeModal, openModal, toast } from './ui.js';
 import { $, esc, plural, store } from './utils.js';
+import { matchHooks } from './tabs/live.js';
 
 const PREFIX = 'crease.';
 const SKIP = new Set(['liveUndo']); // undo history is large and only useful mid-match
@@ -44,15 +45,15 @@ function updateStatus() {
     return;
   }
   el.textContent = last
-    ? `Last backup: ${when(last)}. This browser now holds ${what}.`
-    : `No backup yet. This browser holds ${what}, and nothing else has a copy.`;
+      ? `Last backup: ${when(last)}. This browser now holds ${what}.`
+      : `No backup yet. This browser holds ${what}, and nothing else has a copy.`;
 }
 
 function backupNow() {
   const b = collect();
   const json = JSON.stringify(b, null, 1);
   const name = `crease-backup-${b.exportedAt.slice(0, 10)}.json`;
-  const mark = () => { store.set('lastBackup', b.exportedAt); updateStatus(); };
+  const mark = () => { store.set('lastBackup', b.exportedAt); store.set('nudgeSnooze', 0); hideNudge(); updateStatus(); };
   const body = openModal('Back up everything', `
     <p style="margin:0 0 12px;color:var(--fg-2)">This file holds ${esc(summarise(b.data))}, plus your inputs and settings. Keep it somewhere safe, such as your cloud drive or email.</p>
     <textarea class="csv-box" readonly aria-label="Backup data">${esc(json)}</textarea>
@@ -155,8 +156,8 @@ function restoreDialog() {
       mode = m.dataset.mode;
       body.querySelectorAll('[data-mode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === mode)));
       $('#rs-mode-note', body).textContent = mode === 'merge'
-        ? 'Adds the backup\'s players, matches, squads, tournaments and earlier stats. Where both have the same one, the newer copy wins. Your settings stay as they are.'
-        : 'Deletes everything Crease keeps in this browser, including any match in progress, and puts the backup in its place.';
+          ? 'Adds the backup\'s players, matches, squads, tournaments and earlier stats. Where both have the same one, the newer copy wins. Your settings stay as they are.'
+          : 'Deletes everything Crease keeps in this browser, including any match in progress, and puts the backup in its place.';
       ok.className = 'btn' + (mode === 'replace' ? ' solid-danger' : '');
       ok.textContent = mode === 'replace' ? 'Replace everything' : 'Restore';
     }
@@ -175,3 +176,40 @@ $('#backup-now').addEventListener('click', backupNow);
 $('#backup-restore').addEventListener('click', restoreDialog);
 const renderSaved = RENDER.saved;
 RENDER.saved = () => { renderSaved && renderSaved(); updateStatus(); };
+
+/* ---------- Reminder ----------
+   After a match finishes, a small bar suggests a backup once three or more finished matches exist
+   that no backup has. "Later" waits for three more. On opening the app, it shows at most every few days. */
+const NUDGE_EVERY = 3, NUDGE_GAP = 3 * 24 * 3600 * 1000;
+function sinceBackup() {
+  const last = Date.parse(store.get('lastBackup', '') || '') || 0;
+  const ms = store.get('matches', []);
+  const matches = (Array.isArray(ms) ? ms : []).filter(m => m && m.data && m.data.status === 'done' && (m.savedAt || 0) > last).length;
+  return { matches, last };
+}
+function hideNudge() { const bar = $('#nudge'); if (bar) bar.hidden = true; }
+function nudge({ onLoad = false } = {}) {
+  const { matches, last } = sinceBackup();
+  const snoozed = Number(store.get('nudgeSnooze', 0)) || 0;
+  if (matches < NUDGE_EVERY || matches < snoozed + NUDGE_EVERY) return;
+  if (onLoad && Date.now() - (Number(store.get('nudgeShown', 0)) || 0) < NUDGE_GAP) return;
+  let bar = $('#nudge');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'nudge'; bar.className = 'nudge'; bar.setAttribute('role', 'status');
+    document.body.appendChild(bar);
+    bar.addEventListener('click', e => {
+      const b = e.target.closest('[data-n]');
+      if (!b) return;
+      hideNudge();
+      if (b.dataset.n === 'now') backupNow();
+      else store.set('nudgeSnooze', sinceBackup().matches);
+    });
+  }
+  bar.innerHTML = `<p><strong>${plural(matches, 'finished match', 'finished matches')}</strong> ${last ? 'since your last backup' : 'and no backup yet'}. They're only kept in this browser.</p>
+    <div class="nudge-acts"><button type="button" class="btn sm" data-n="now">Back up now</button><button type="button" class="btn ghost sm" data-n="later">Later</button></div>`;
+  bar.hidden = false;
+  store.set('nudgeShown', Date.now());
+}
+matchHooks.done.push(() => { setTimeout(() => nudge(), 2800); }); // after the "match saved" toast
+setTimeout(() => nudge({ onLoad: true }), 3000);

@@ -1,8 +1,9 @@
 import { alpha, axes, baseOpts, chart, pal } from '../charts.js';
-import { shareImage, showCSV, toCSV } from '../export.js';
+import { fitText, roundRect, shareImage, showCSV, showImageModal, toCSV } from '../export.js';
 import { tipBtn } from '../groups.js';
-import { DLS, fmtOvers, profileFor, winProb } from '../maths.js';
+import { DLS, fmtOvers, parseOvers, profileFor, winProb } from '../maths.js';
 import { RENDER, nav } from '../router.js';
+import { dlsMatch } from '../stats.js';
 import { fmt } from '../state.js';
 import { closeModal, confirmBox, gaugeMarkup, modal, openModal, setGauge, toast } from '../ui.js';
 import { $, $$, esc, fx, nf, plural, store, uid } from '../utils.js';
@@ -20,8 +21,20 @@ export const mkBowler = name => ({ name, balls: 0, runs: 0, wkts: 0, maidens: 0,
 export const mkOver = bowler => ({ bowler, balls: [], runs: 0, bowlerRuns: 0, wkts: 0, legal: 0 });
 export function newInnings(bat, s, ns, bowler, target) {
   return { bat, runs: 0, wkts: 0, balls: 0, extras: { wd: 0, nb: 0, b: 0, lb: 0 }, batters: [mkBatter(s), mkBatter(ns)], striker: 0, non: 1,
-    bowlers: [mkBowler(bowler)], bowler: 0, lastBowler: -1, overs: [mkOver(0)], freeHit: false, target, needBowler: false, fow: [], part: { runs: 0, balls: 0 }, ended: null };
+    bowlers: [mkBowler(bowler)], bowler: 0, lastBowler: -1, overs: [mkOver(0)], freeHit: false, target, needBowler: false, fow: [], part: { runs: 0, balls: 0 }, ended: null,
+    parts: [mkPart(0, 1, 1)] };
 }
+// One partnership: the two batters (by position in the innings), runs and balls together, and each one's share.
+export const mkPart = (x, y, w) => ({ p: [x, y], w, runs: 0, balls: 0, r: [0, 0], b: [0, 0] });
+// A new pair after a wicket or a retirement. An empty stand (no runs, no balls) is replaced rather than kept.
+function newPart(i) {
+  if (!Array.isArray(i.parts)) return; // matches started before partnerships were recorded
+  const last = i.parts[i.parts.length - 1];
+  const p = mkPart(i.striker, i.non, i.wkts + 1);
+  if (last && !last.runs && !last.balls) i.parts[i.parts.length - 1] = p; else i.parts.push(p);
+}
+// Balls this innings may last: the overs per side, less anything taken off for rain.
+export const maxBallsOf = (i, m = live) => i.maxBalls ?? (m.overs ? m.overs * 6 : null);
 export const cur = () => live.inns[live.inns.length - 1];
 export function saveLive() { store.set('live', live); store.set('liveUndo', undoStack.slice(-40)); }
 
@@ -94,7 +107,8 @@ function runEntry(e) {
     case 'pen': return corePenalty(e.bat);
     case 'rename': return coreRename(e.names);
     case 'end': return coreEnd(e.reason);
-    case 'start2': return coreStart2(e.s, e.ns, e.bw, e.bat);
+    case 'start2': return coreStart2(e.s, e.ns, e.bw, e.bat, e.lost || 0);
+    case 'rain': return coreRain(e.lost, e.noMore);
     default: return 'an unknown action';
   }
 }
@@ -210,6 +224,13 @@ function coreBall(ev) {
   if (ev.type === 'wkt' && !ro) mu.outs++;
   // Where the shot went (wagon wheel), when the scorer tapped it
   if (ev.ww && batRuns > 0 && isFinite(ev.ww.x) && isFinite(ev.ww.y)) (st.shots = st.shots || []).push({ x: +ev.ww.x.toFixed(3), y: +ev.ww.y.toFixed(3), r: batRuns });
+  // Partnership: every run counts for the pair; the striker's own runs and balls are tracked too.
+  const pt = Array.isArray(i.parts) ? i.parts[i.parts.length - 1] : null;
+  if (pt) {
+    pt.runs += total; if (legal) pt.balls++;
+    const s = pt.p.indexOf(strikerBefore);
+    if (s !== -1) { pt.r[s] += batRuns; if (!wideBall) pt.b[s]++; }
+  }
 
   if (ran % 2 === 1) { const t = i.striker; i.striker = i.non; i.non = t; }
 
@@ -225,6 +246,7 @@ function coreBall(ev) {
     if (canBringIn(i)) {
       const ni = bringIn(i, ev.newBatter);
       if (i.striker === outIdx) i.striker = ni; else if (i.non === outIdx) i.non = ni;
+      newPart(i);
     } else noneLeft = true;
   }
 
@@ -238,7 +260,8 @@ function coreBall(ev) {
     const t = i.striker; i.striker = i.non; i.non = t;
   }
 
-  const oversDone = live.overs && i.balls >= live.overs * 6;
+  const cap = maxBallsOf(i);
+  const oversDone = cap != null && i.balls >= cap;
   const chased = i.target != null && i.runs >= i.target;
   if (noneLeft || oversDone || chased) endInnings(chased ? 'target' : noneLeft ? 'all out' : 'overs');
   else if (overDone) { i.lastBowler = i.bowler; i.needBowler = true; }
@@ -325,6 +348,7 @@ function coreRetire(who, name) {
   const ni = bringIn(i, name);
   if (i.striker === idx) i.striker = ni; else i.non = ni;
   i.part = { runs: 0, balls: 0 };
+  newPart(i);
   return null;
 }
 export function retireBatter(who, name) { return !act({ t: 'retire', who, name }, () => coreRetire(who, name)); }
@@ -380,6 +404,59 @@ function coreEndAny(reason) {
   endInnings(reason);
   return null;
 }
+
+/* ---------- Rain (limited overs) ----------
+   A stoppage takes overs off the innings in play. Overs lost from the first innings lower Team 1's
+   resources; Team 2's target then comes from the same DLS-style resource model as the Rain target tab. */
+const minResultOvers = n => (n >= 50 ? 20 : n >= 20 ? 5 : Math.max(1, Math.ceil(n / 4)));
+export const rainHit = (m = live) => !!(m && m.rain && m.rain.stops.some(s => s.length));
+const wkScale = (m, i) => i.wkts + (11 - ppsOf(m, i)); // smaller sides mapped onto the 10-wicket model
+// Team 2's target, allocation and current par. `lost2` previews overs lost before the chase starts.
+export function dlsFor(m = live, lost2 = 0) {
+  const i1 = m.inns[0], i2 = m.inns[1];
+  const stops = m.rain ? m.rain.stops : [[], []];
+  const stops2 = i2 ? stops[1] : (lost2 > 0 ? [{ u: 0, w: 0, lost: lost2 }] : []);
+  return dlsMatch({ S: i1.runs, n1Balls: m.overs * 6, stops1: stops[0], n2Balls: maxBallsOf(i1, m), stops2, formatOvers: m.overs, balls2: i2 ? i2.balls : 0, wkts2: i2 ? wkScale(m, i2) : 0 });
+}
+// What the side batting second will chase, before its innings starts.
+export function plannedChase(m = live, lost2 = 0) {
+  const i1 = m.inns[0];
+  if (isTest(m) || !m.overs || (!rainHit(m) && !(lost2 > 0))) return { target: i1.runs + 1, balls: m.overs ? maxBallsOf(i1, m) : null, dls: false };
+  const d = dlsFor(m, lost2);
+  return { target: d.target, balls: d.alloc2, dls: true };
+}
+function coreRain(lost, noMore) {
+  if (live.status !== 'live') return 'the innings had already finished';
+  if (isTest() || !live.overs) return 'rain targets only apply to limited-overs matches';
+  const i = cur(), k = live.inns.length - 1;
+  const alloc = maxBallsOf(i), left = alloc - i.balls;
+  const take = noMore ? left : lost;
+  if (!Number.isInteger(take) || take <= 0) return left <= 0 ? 'no overs were left to lose' : 'enter the overs lost';
+  if (take > left) return `only ${fmtOvers(left)} overs were left to lose`;
+  if (!live.rain) live.rain = { stops: [[], []] };
+  live.rain.stops[k].push({ u: i.balls, w: wkScale(live, i), lost: take });
+  i.maxBalls = alloc - take;
+  if (k === 0) {
+    if (i.maxBalls <= i.balls) endInnings('rain');
+    return null;
+  }
+  const d = dlsFor();
+  i.target = d.target; i.dls = true;
+  if (i.maxBalls <= i.balls) {
+    // No more play. Short of the minimum overs there is no result; otherwise the par score decides.
+    if (i.balls < minResultOvers(live.overs) * 6) {
+      i.ended = 'abandoned'; i.needBowler = false; i.freeHit = false;
+      live.status = 'done'; live.result = 'No result';
+      return null;
+    }
+    live.dlsPar = d.parNow;
+    endInnings('rain');
+    return null;
+  }
+  if (i.runs >= i.target) endInnings('target');
+  return null;
+}
+export function applyRain(lost, noMore) { return act({ t: 'rain', lost, noMore: !!noMore }, () => coreRain(lost, noMore)); }
 
 function renameInSquad(team, old, nm) {
   const sq = live.squads?.[team];
@@ -472,13 +549,22 @@ export function computeResult() {
   }
   const [i1, i2] = live.inns;
   const t1 = live.teams[i1.bat], t2 = live.teams[i2.bat];
+  const dl = i2.dls ? ' (DLS)' : '';
+  // Rain ended the chase for good: the result is decided against the par score.
+  if (i2.ended === 'rain' && live.dlsPar != null) {
+    const par = live.dlsPar;
+    if (i2.runs > par) return `${t2} won by ${plural(i2.runs - par, 'run')} (DLS)`;
+    if (i2.runs === par) return 'Match tied (DLS)';
+    return `${t1} won by ${plural(par - i2.runs, 'run')} (DLS)`;
+  }
   if (i2.runs >= i2.target) {
     const wl = ppsOf(live, i2) - 1 - i2.wkts;
-    const bl = live.overs ? live.overs * 6 - i2.balls : null;
-    return `${t2} won by ${plural(wl, 'wicket')}${bl ? ` (${plural(bl, 'ball')} left)` : ''}`;
+    const cap = maxBallsOf(i2);
+    const bl = cap ? cap - i2.balls : null;
+    return `${t2} won by ${plural(wl, 'wicket')}${bl ? ` (${i2.dls ? 'DLS, ' : ''}${plural(bl, 'ball')} left)` : dl}`;
   }
-  if (i2.runs === i2.target - 1) return 'Match tied';
-  return `${t1} won by ${plural(i2.target - 1 - i2.runs, 'run')}`;
+  if (i2.runs === i2.target - 1) return `Match tied${dl}`;
+  return `${t1} won by ${plural(i2.target - 1 - i2.runs, 'run')}${dl}`;
 }
 
 function coreBowler(name) {
@@ -489,7 +575,7 @@ function coreBowler(name) {
   let idx = i.bowlers.findIndex(b => sameName(b.name, nm));
   if (idx !== -1 && idx === i.lastBowler) return `${i.bowlers[idx].name} bowled the last over. Pick someone else.`;
   if (idx !== -1 && live.overs) {
-    const cap = Math.ceil(live.overs / 5);
+    const cap = bowlCap(i);
     if (Math.floor(i.bowlers[idx].balls / 6) >= cap) return `${i.bowlers[idx].name} has bowled the maximum ${plural(cap, 'over')}.`;
   }
   if (idx === -1) { i.bowlers.push(mkBowler(nm)); idx = i.bowlers.length - 1; }
@@ -498,6 +584,8 @@ function coreBowler(name) {
   i.needBowler = false;
   return null;
 }
+// Each bowler may bowl a fifth of the innings, rounded up; a rain-shortened innings has a lower limit.
+const bowlCap = i => Math.ceil(Math.ceil(maxBallsOf(i) / 6) / 5);
 export function setBowler(name) {
   const err = act({ t: 'bowler', name: (name || '').trim() }, () => coreBowler(name));
   if (err) { const el = $('#live-bowler-err'); if (el) el.textContent = err; }
@@ -680,13 +768,14 @@ export function boardHTML() {
   const team = live.teams[i.bat];
   const crr = i.balls ? i.runs / (i.balls / 6) : null;
   const chasing = i.target != null;
-  const ballsLeft = live.overs ? live.overs * 6 - i.balls : null;
+  const cap = maxBallsOf(i);
+  const ballsLeft = cap != null ? cap - i.balls : null;
   const need = chasing ? i.target - i.runs : null;
   const rrr = chasing && ballsLeft > 0 && need > 0 ? need / (ballsLeft / 6) : null;
   let eq = '';
   if (live.status === 'done') eq = `<span class="ok">${esc(live.result)}</span>`;
   else if (live.status === 'break' && isTest()) eq = esc(leadText(true));
-  else if (live.status === 'break') eq = `Innings over. ${esc(live.teams[1 - i.bat])} need <em>${i.runs + 1}</em> to win`;
+  else if (live.status === 'break') { const pc = plannedChase(); eq = `Innings over. ${esc(live.teams[1 - i.bat])} need <em>${pc.target}</em> to win${pc.dls ? ` off ${fmtOvers(pc.balls)} overs (DLS)` : ''}`; }
   else if (isTest() && !chasing) eq = esc(leadText(false));
   else if (chasing && ballsLeft != null && need > ballsLeft * 6) eq = `Need ${need} off ${ballsLeft} ${ballsLeft === 1 ? 'ball' : 'balls'}: <span class="no">out of reach</span>`;
   else if (chasing) eq = ballsLeft != null ? `Need <em>${need}</em> off <em>${ballsLeft}</em> ${ballsLeft === 1 ? 'ball' : 'balls'}` : `Need <em>${need}</em> to win`;
@@ -694,12 +783,13 @@ export function boardHTML() {
   return `<div class="board${live.status === 'live' && chasing ? ' pulse' : ''}">
     <div class="board-main">
       <div class="team-line">${esc(team)}${isTest() ? `<span class="dim" style="font-size:.85em">${ORD[live.inns.length - 1]} innings${live.followedOn && live.inns.length === 3 ? ', following on' : ''}</span>` : ''}${live.status === 'live' ? '<span class="badge live">Live</span>' : ''}${i.freeHit && live.status === 'live' ? '<span class="badge fh">Free hit</span>' : ''}</div>
-      <div class="score-big">${i.runs}/${i.wkts}<small>(${fmtOvers(i.balls)}${live.overs ? `/${live.overs}` : ''} ov)</small></div>
+      <div class="score-big">${i.runs}/${i.wkts}<small>(${fmtOvers(i.balls)}${cap != null ? `/${fmtOvers(cap)}` : ''} ov)</small></div>
       ${eq ? `<div class="board-eq" style="font-size:clamp(1.15rem,.9rem + 1.2vw,1.6rem);margin-top:8px">${eq}</div>` : ''}
     </div>
     <div class="board-side">
       <div class="board-stat"><b>${crr != null ? nf(crr) : '—'}</b><span>Run rate</span></div>
-      ${chasing ? `<div class="board-stat"><b>${i.target}</b><span>Target</span></div>` : ''}
+      ${chasing ? `<div class="board-stat"><b>${i.target}</b><span>Target${i.dls ? ' (DLS)' : ''}</span></div>` : ''}
+      ${chasing && i.dls && live.status === 'live' && !isTest() ? `<div class="board-stat"><b>${dlsFor().parNow}</b><span>DLS par now</span></div>` : ''}
       ${chasing && live.status === 'live' ? `<div class="board-stat"><b>${rrr != null ? nf(rrr) : '—'}</b><span>Required</span></div>` : ''}
       ${live.status === 'live' ? `<div class="board-stat"><b>${i.part.runs}<small style="font-size:.6em;color:#9fb4a8"> (${i.part.balls})</small></b><span>Partnership</span></div>` : ''}
     </div>
@@ -709,7 +799,7 @@ export function boardHTML() {
 function bowlerPicker(i) {
   const fsq = sqOf(live, 1 - i.bat);
   if (!fsq) return liveField('live-bowler', 'Bowler', '', { list: 'live-bowlers' });
-  const cap = live.overs ? Math.ceil(live.overs / 5) : Infinity;
+  const cap = live.overs ? bowlCap(i) : Infinity;
   const find = nm => i.bowlers.findIndex(b => sameName(b.name, nm));
   const eligible = fsq.filter(nm => { const k = find(nm); return k === -1 || (k !== i.lastBowler && Math.floor(i.bowlers[k].balls / 6) < cap); });
   // Default: whoever bowled the over before last (the usual change of ends), then another recent bowler, then the tail.
@@ -768,6 +858,7 @@ export function liveHTML(animateLast) {
             <button type="button" class="btn ghost sm" data-act="swap">Swap strike</button>
             <button type="button" class="btn ghost sm" data-act="retire">Retire batter</button>
             <button type="button" class="btn ghost sm" data-act="penalty">Penalty runs</button>
+            ${live.overs && !isTest() ? '<button type="button" class="btn ghost sm" data-act="rain">Rain / stoppage</button>' : ''}
             <button type="button" class="btn ghost sm" data-act="rename">Edit names</button>
             <button type="button" class="btn ghost sm danger" data-act="end-inn">${isTest() ? 'Declare' : 'End innings'}</button>
             ${isTest() ? '<button type="button" class="btn ghost sm" data-act="draw">End as a draw</button>' : '<button type="button" class="btn ghost sm" data-act="abandon">No result</button>'}
@@ -798,8 +889,8 @@ export function liveHTML(animateLast) {
 /* Match situation inside the live scorer: projections, win probability, par check. */
 export function liveSituation() {
   if (!live || live.status !== 'live' || !live.overs) return null;
-  const i = cur(), N = live.overs, prof = profileFor(N);
-  const left = N * 6 - i.balls;
+  const i = cur(), cap = maxBallsOf(i), N = cap / 6, prof = profileFor(N);
+  const left = cap - i.balls;
   const crr = i.balls ? i.runs / (i.balls / 6) : null;
   const chasing = i.target != null;
   const need = chasing ? i.target - i.runs : null;
@@ -878,7 +969,7 @@ export function wpSeries(m) {
   const i2 = m.inns[1];
   if (!i2 || !m.overs) return null;
   const pps = ppsOf(m, i2);
-  const N = m.overs, prof = profileFor(N), off = 11 - pps;
+  const N = maxBallsOf(i2, m) / 6, prof = profileFor(N), off = 11 - pps;
   const pts = [{ l: '0', p: winProb(i2.target, N * 6, off, N, prof) }];
   let r = 0, w = 0, b = 0;
   i2.overs.filter(o => o.balls.length).forEach(o => {
@@ -901,19 +992,21 @@ export function breakHTML() {
   const t2 = live.teams[batTeam];
   const title = test
       ? `${ORD[n]} innings: ${t2} to bat${n === 3 ? `, needing ${testNeed(batTeam)} to win` : ''}`
-      : `Second innings: ${t2} need ${live.inns[0].runs + 1}`;
+      : chaseTitle(t2, plannedChase());
   const fo = test && nx.canFollowOn ? `<div class="modal-block"><p class="modal-sub">${esc(live.teams[live.inns[0].bat])} lead by ${plural(nx.lead, 'run')}, so they can enforce the follow-on</p>
     <div class="seg"><button type="button" data-act="fo" data-v="0" aria-pressed="${!followOn}">${esc(live.teams[live.inns[0].bat])} bat again</button><button type="button" data-act="fo" data-v="1" aria-pressed="${followOn}">Enforce the follow-on: ${esc(live.teams[live.inns[1].bat])} bat again</button></div></div>` : '';
   const bsq = sqOf(live, batTeam), fsq = sqOf(live, 1 - batTeam);
   const opts = (sq, team) => sq.map(nm => ({ v: nm, l: nm + roleTag(live, team, nm) }));
   return `${boardHTML()}
   <div class="card prompt-card">
-    <h2 class="card-title">${esc(title)}</h2>
+    <h2 class="card-title" id="l2-title">${esc(title)}</h2>
     ${fo}
     <div class="setup-grid">
       ${(bsq ? selectField('l2-s', 'Striker', opts(bsq, batTeam), bsq[0]) + selectField('l2-ns', 'Non-striker', opts(bsq, batTeam), bsq[1]) : liveField('l2-s', 'Striker', 'Batter 1') + liveField('l2-ns', 'Non-striker', 'Batter 2'))
   + (fsq ? selectField('l2-bw', 'Opening bowler', opts(fsq, 1 - batTeam), fsq[fsq.length - 1]) : liveField('l2-bw', 'Opening bowler', ''))}
+      ${!test && live.overs ? liveField('l2-lost', 'Overs lost before the chase', '0', { im: 'decimal', max: 5 }) : ''}
     </div>
+    ${!test && live.overs ? '<p class="hint" id="l2-dls">If rain takes overs off the chase before it starts, enter them and the target is revised.</p>' : ''}
     <p class="err-text" id="l2-err"></p>
     <div class="modal-actions" style="justify-content:flex-start">
       <button type="button" class="btn" data-act="start-2nd">Start ${test ? ORD[n] : 'second'} innings</button>
@@ -921,6 +1014,26 @@ export function breakHTML() {
       <button type="button" class="btn ghost" data-act="undo"${undoStack.length ? '' : ' disabled'}>Undo last ball</button>
     </div>
   </div>`;
+}
+const chaseTitle = (t2, pc) => `Second innings: ${t2} need ${pc.target}${pc.dls ? ` off ${fmtOvers(pc.balls)} overs (DLS)` : ''}`;
+// Overs lost before the chase: the box accepts cricket notation; empty or 0 means none.
+function readLost2() {
+  const s = ($('#l2-lost')?.value ?? '').trim();
+  if (!s || s === '0') return { balls: 0 };
+  const p = parseOvers(s);
+  if (p.error || p.balls == null) return { error: `Overs lost: ${p.error || 'write it like 4 or 4.3'}.` };
+  const full = maxBallsOf(live.inns[0]);
+  if (p.balls >= full) return { error: `Overs lost must be less than the ${fmtOvers(full)} overs available.` };
+  return { balls: p.balls };
+}
+function previewLost2() {
+  const r = readLost2(), t = $('#l2-title'), h = $('#l2-dls');
+  if (!t || !h) return;
+  if (r.error) { h.textContent = r.error; h.classList.add('bad-text'); return; }
+  h.classList.remove('bad-text');
+  const pc = plannedChase(live, r.balls);
+  t.textContent = chaseTitle(live.teams[1 - live.inns[0].bat], pc);
+  h.textContent = r.balls ? `${fmtOvers(r.balls)} overs lost: the chase is ${fmtOvers(pc.balls)} overs, with a DLS-style revised target.` : 'If rain takes overs off the chase before it starts, enter them and the target is revised.';
 }
 export function startSecond() {
   const g = id => ($('#' + id)?.value ?? '').trim();
@@ -930,13 +1043,18 @@ export function startSecond() {
   if (s.toLowerCase() === ns.toLowerCase()) { err.textContent = 'The two openers need different names.'; return; }
   if (!bw) { err.textContent = 'Type the opening bowler\'s name.'; return; }
   const bat = isTest() ? nextBatTeam() : undefined;
-  const e = act({ t: 'start2', s, ns, bw, bat }, () => coreStart2(s, ns, bw, bat));
+  const lr = isTest() ? { balls: 0 } : readLost2();
+  if (lr.error) { err.textContent = lr.error; return; }
+  const lost = lr.balls;
+  const e = act({ t: 'start2', s, ns, bw, bat, lost }, () => coreStart2(s, ns, bw, bat, lost));
   if (e) err.textContent = e; else followOn = false;
 }
 let followOn = false; // break-screen choice in a Test
 function nextBatTeam() { const nx = testNext(); return nx.canFollowOn && followOn ? live.inns[1].bat : nx.bat; }
-function coreStart2(s, ns, bw, bat) {
+function coreStart2(s, ns, bw, bat, lost = 0) {
   if (live.status !== 'break') return 'the previous innings hadn\'t finished at that point';
+  const limited = !isTest() && live.overs;
+  if (lost && (!limited || !Number.isInteger(lost) || lost < 0 || lost >= maxBallsOf(live.inns[0]))) return 'the overs lost before the chase didn\'t fit the innings';
   const last = live.inns[live.inns.length - 1];
   let team, target;
   if (isTest()) {
@@ -948,6 +1066,10 @@ function coreStart2(s, ns, bw, bat) {
   const penFor = live.pendingPenTeam ?? (1 - last.bat);
   if (live.pendingPen && penFor === team) { inn.runs += live.pendingPen; inn.extras.pen = live.pendingPen; inn.overs[0].runs += live.pendingPen; live.pendingPen = 0; live.pendingPenTeam = null; }
   live.inns.push(inn);
+  if (limited) {
+    if (lost > 0) { if (!live.rain) live.rain = { stops: [[], []] }; live.rain.stops[1].push({ u: 0, w: 0, lost }); }
+    if (rainHit()) { const d = dlsFor(); inn.target = d.target; inn.maxBalls = d.alloc2; inn.dls = true; }
+  }
   live.status = 'live';
   return null;
 }
@@ -955,7 +1077,7 @@ function coreStart2(s, ns, bw, bat) {
 export function doneHTML() {
   return `${boardHTML()}<div class="card result-banner"><h2 class="card-title">Result</h2><p style="margin:0;font:700 1.4rem/1.25 var(--f-display);letter-spacing:.02em">${esc(live.result)}</p>
     <p class="hint">${live.inns.map(i => `${esc(live.teams[i.bat])} ${i.runs}/${i.wkts} (${fmtOvers(i.balls)} ov)`).join(' · ')}</p>
-    <div class="modal-actions" style="justify-content:flex-start"><button type="button" class="btn" data-act="save-match">Save match</button><button type="button" class="btn ghost" data-act="image">Share as image</button><button type="button" class="btn ghost" data-act="csv">Scorecard CSV</button><button type="button" class="btn ghost" data-act="undo"${undoStack.length ? '' : ' disabled'}>Undo last ball</button></div></div>`;
+    <div class="modal-actions" style="justify-content:flex-start"><button type="button" class="btn" data-act="save-match">Save match</button><button type="button" class="btn ghost" data-act="image">Share as image</button><button type="button" class="btn ghost" data-act="sc-image">Scorecard image</button><button type="button" class="btn ghost" data-act="print">Print or save as PDF</button><button type="button" class="btn ghost" data-act="csv">Scorecard CSV</button><button type="button" class="btn ghost" data-act="undo"${undoStack.length ? '' : ' disabled'}>Undo last ball</button></div></div>`;
 }
 
 // A ball in an over. In the live match it's a button that opens the edit dialog.
@@ -964,7 +1086,30 @@ function chip(b, isNew, small, m = live) {
   if (m === live && canEdit() && Number.isInteger(b.li) && b.li >= 0) return `<button type="button" class="${cls} editable" data-act="edit-ball" data-li="${b.li}" aria-label="Edit ball: ${esc(b.l)}">${esc(b.l)}</button>`;
   return `<span class="${cls}">${esc(b.l)}</span>`;
 }
-const endedText = (r, m) => ({ target: 'Target reached', 'all out': 'All out', overs: 'Overs used up', declared: isTest(m) ? 'Declared' : 'Innings closed early', draw: 'Match drawn', abandoned: 'No result' })[r] || `Ended: ${r}`;
+const endedText = (r, m) => ({ target: 'Target reached', 'all out': 'All out', overs: 'Overs used up', declared: isTest(m) ? 'Declared' : 'Innings closed early', draw: 'Match drawn', abandoned: 'No result', rain: 'Cut short by rain' })[r] || `Ended: ${r}`;
+// Partnerships. Matches scored before partnerships were recorded fall back to runs between wickets.
+const ordW = k => (['1st', '2nd', '3rd'][k - 1] || `${k}th`);
+export function partnershipRows(m, i) {
+  if (Array.isArray(i.parts)) {
+    const last = i.parts[i.parts.length - 1];
+    return i.parts.filter(p => p.runs || p.balls).map(p => ({
+      w: p.w, runs: p.runs, balls: p.balls,
+      names: p.p.map((j, s) => { const b = i.batters[j]; return b ? { name: b.name, r: p.r[s], b: p.b[s] } : null; }).filter(Boolean),
+      open: p === last && i.ended !== 'all out',
+    }));
+  }
+  let prev = 0;
+  const rows = i.fow.map(f => { const r = { w: f.wkt, runs: f.score - prev, balls: null, names: [], open: false }; prev = f.score; return r; });
+  if (rows.length && i.runs > prev && i.ended !== 'all out') rows.push({ w: i.wkts + 1, runs: i.runs - prev, balls: null, names: [], open: true });
+  return rows;
+}
+function partsHTML(m, i) {
+  const rows = partnershipRows(m, i);
+  if (!rows.length) return '';
+  const best = rows.reduce((a, b) => (b.runs > a.runs ? b : a));
+  const who = r => r.names.length ? r.names.map(n => `${esc(n.name)} <span class="dim">${n.r} (${n.b})</span>`).join(' &amp; ') : '<span class="dim">—</span>';
+  return `<details class="bbb parts"><summary>Partnerships · best ${best.runs}${best.open ? '*' : ''} for the ${ordW(best.w)} wicket</summary><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Wkt</th><th>Batters</th><th class="num">Runs</th><th class="num">Balls</th></tr></thead><tbody>${rows.map(r => `<tr><td class="dim">${ordW(r.w)}</td><td style="white-space:normal">${who(r)}</td><td class="num"><b>${r.runs}${r.open ? '*' : ''}</b></td><td class="num">${r.balls ?? '—'}</td></tr>`).join('')}</tbody></table></div>${rows.some(r => r.open) ? '<p class="sc-meta">* unbroken</p>' : ''}</details>`;
+}
 export function scorecardHTML(m, idx) {
   const i = m.inns[idx];
   const team = m.teams[i.bat];
@@ -981,8 +1126,9 @@ export function scorecardHTML(m, idx) {
   return `<div class="card scorecard">
     <div class="sc-head"><h3>${esc(team)} · innings ${idx + 1}</h3><span class="sc-total">${i.runs}/${i.wkts} <span class="dim" style="font-size:.8em">(${fmtOvers(i.balls)} ov, RR ${rr})</span></span></div>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Batter</th><th>Dismissal</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th></tr></thead><tbody>${bats}</tbody></table></div>
-    <p class="sc-meta">Extras ${exT} (b ${ex.b}, lb ${ex.lb}, w ${ex.wd}, nb ${ex.nb}${ex.pen ? `, pen ${ex.pen}` : ''})${i.target != null ? ` · Target ${i.target}` : ''}${i.ended ? ` · ${esc(endedText(i.ended, m))}` : ''}</p>
+    <p class="sc-meta">Extras ${exT} (b ${ex.b}, lb ${ex.lb}, w ${ex.wd}, nb ${ex.nb}${ex.pen ? `, pen ${ex.pen}` : ''})${i.target != null ? ` · Target ${i.target}${i.dls ? ' (DLS)' : ''}` : ''}${i.maxBalls != null && m.overs && i.maxBalls !== m.overs * 6 ? ` · Reduced to ${fmtOvers(i.maxBalls)} overs` : ''}${i.ended ? ` · ${esc(endedText(i.ended, m))}` : ''}</p>
     ${i.fow.length ? `<p class="sc-meta">Fall of wickets: ${i.fow.map(w => `${w.score}-${w.wkt} (${esc(w.name)}, ${w.over} ov)`).join(', ')}</p>` : ''}
+    ${partsHTML(m, i)}
     ${(() => {
     const ov = i.overs.filter(o => o.balls.length);
     if (!ov.length) return '';
@@ -1373,6 +1519,9 @@ export async function liveAction(action, el) {
     case 'more': moreRunsModal(); break;
     case 'retire': retireModal(); break;
     case 'penalty': penaltyModal(); break;
+    case 'rain': rainModal(); break;
+    case 'sc-image': scorecardImage(live); break;
+    case 'print': printScorecard(live); break;
     case 'rename': renameModal(); break;
     case 'undo': undo(); break;
     case 'swap': act({ t: 'swap' }, coreSwap); break;
@@ -1420,7 +1569,10 @@ $('#tab-live').addEventListener('click', e => {
     if (again && !again.disabled) again.focus({ preventScroll: true });
   }
 });
-$('#tab-live').addEventListener('input', e => { if (!live && e.target.closest('#live-main')) setupSync(e.target); });
+$('#tab-live').addEventListener('input', e => {
+  if (!live && e.target.closest('#live-main')) setupSync(e.target);
+  if (live && e.target.id === 'l2-lost') previewLost2();
+});
 $('#tab-live').addEventListener('change', e => {
   if (!live && e.target.id === 'ls-type') setupSync(e.target);
   if (e.target.id === 'ww-on') { e.target.blur(); store.set('wwOn', e.target.checked); toast(e.target.checked ? 'You\'ll be asked where each scoring shot went' : 'Wagon wheel prompts off'); }
@@ -1446,7 +1598,7 @@ export function liveShareData() {
   const f = live.format;
   return {
     eyebrow: `${f} · ${live.teams[0]} v ${live.teams[1]}`,
-    title: live.result || (live.status === 'break' ? (isTest() ? leadText(true).replace(/^Innings over\. /, '') : `${live.teams[1 - live.inns[0].bat]} need ${live.inns[0].runs + 1}`) : `${live.teams[cur().bat]} ${cur().runs}/${cur().wkts}`),
+    title: live.result || (live.status === 'break' ? (isTest() ? leadText(true).replace(/^Innings over\. /, '') : `${live.teams[1 - live.inns[0].bat]} need ${plannedChase().target}`) : `${live.teams[cur().bat]} ${cur().runs}/${cur().wkts}`),
     subtitle: live.inns.map(i => `${live.teams[i.bat]} ${i.runs}/${i.wkts} (${fmtOvers(i.balls)} ov)`).join('  ·  '),
     stats: live.inns.flatMap(i => {
       const top = i.batters.slice().sort((a, b) => b.runs - a.runs)[0];
@@ -1477,3 +1629,164 @@ export function scorecardCSV(m) {
 
 export function clearLive() { live = null; undoStack = []; store.del('live'); store.del('liveUndo'); }
 export function resumeMatch(data) { live = JSON.parse(JSON.stringify(data)); undoStack = []; saveLive(); }
+
+/* ---------- Rain dialog ---------- */
+const poss = n => (/s$/i.test(n) ? `${n}'` : `${n}'s`);
+function rainModal() {
+  if (!live || live.status !== 'live' || !live.overs || isTest()) return;
+  const i = cur(), k = live.inns.length - 1;
+  const team = live.teams[i.bat], other = live.teams[1 - i.bat];
+  const left = maxBallsOf(i) - i.balls;
+  const body = openModal('Rain or bad light', `
+    <p class="hint" style="margin:-6px 0 12px">${k === 0
+      ? `Takes overs off ${esc(poss(team))} innings. ${esc(poss(other))} target is then set with a DLS-style calculation.`
+      : `Takes overs off ${esc(poss(team))} chase and revises the target with a DLS-style calculation.`} ${fmtOvers(left)} overs are left in this innings.</p>
+    <div class="fields">${liveField('rn-lost', 'Overs lost', '', { im: 'decimal', max: 5 })}</div>
+    <label class="check" style="margin-top:10px"><input type="checkbox" id="rn-end"> No more play in this innings</label>
+    <p class="answer" id="rn-prev" style="display:block;margin-top:14px" hidden></p>
+    <p class="err-text" id="rn-err"></p>
+    <p class="hint">The official DLS tables are licensed, so match officials' targets can differ by a few runs. Undo reverses this like any other change.</p>
+    <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Apply</button></div>`);
+  const read = () => {
+    if ($('#rn-end', body).checked) return { noMore: true, balls: left };
+    const s = $('#rn-lost', body).value.trim();
+    if (!s) return { error: 'Enter the overs lost, or tick “No more play”.' };
+    const p = parseOvers(s);
+    if (p.error || p.balls == null) return { error: `Overs lost: ${p.error || 'write it like 4 or 4.3'}.` };
+    if (p.balls <= 0) return { error: 'Enter the overs lost, or tick “No more play”.' };
+    if (p.balls > left) return { error: `Only ${fmtOvers(left)} overs are left in this innings.` };
+    return { balls: p.balls, noMore: p.balls === left };
+  };
+  // Preview: apply the stoppage to a copy of the match, describe it, and put the match back.
+  const preview = () => {
+    const r = read(), out = $('#rn-prev', body), errEl = $('#rn-err', body);
+    $('#rn-lost', body).disabled = $('#rn-end', body).checked;
+    if (r.error) { out.hidden = true; return r; }
+    errEl.textContent = '';
+    const snap = JSON.stringify(live);
+    let text;
+    try {
+      const err = coreRain(r.balls, r.noMore);
+      if (err) text = err;
+      else if (live.status === 'done') text = `No more play: <strong>${esc(live.result)}</strong>${live.dlsPar != null ? ` (par was ${live.dlsPar})` : ''}.`;
+      else if (k === 0) text = live.status === 'break' ? `${esc(poss(team))} innings ends at ${cur().runs}/${cur().wkts}. ${esc(other)} would need <strong>${plannedChase().target}</strong> from ${fmtOvers(plannedChase().balls)} overs.` : `${esc(poss(team))} innings becomes <strong>${fmtOvers(maxBallsOf(cur()))} overs</strong>. ${esc(poss(other))} target is revised when they bat.`;
+      else { const c = cur(); text = c.ended === 'target' ? `${esc(team)} are already past the revised target of ${c.target}.` : `Revised target <strong>${c.target}</strong> from ${fmtOvers(maxBallsOf(c))} overs: ${esc(team)} need ${c.target - c.runs} more off ${plural(maxBallsOf(c) - c.balls, 'ball')}.`; }
+    } finally { live = JSON.parse(snap); }
+    out.hidden = false; out.innerHTML = text;
+    return r;
+  };
+  body.addEventListener('input', preview);
+  body.addEventListener('change', preview);
+  body.addEventListener('click', e => {
+    const x = e.target.closest('[data-x]');
+    if (!x) return;
+    if (x.dataset.x === 'cancel') { closeModal(); return; }
+    const r = preview();
+    if (r.error) { $('#rn-err', body).textContent = r.error; return; }
+    closeModal();
+    const err = applyRain(r.balls, r.noMore);
+    toast(err ? `Can't apply that: ${err}.` : live.status === 'done' ? `Match over: ${live.result}` : 'Stoppage recorded. Target and overs updated.');
+  });
+}
+
+/* ---------- Scorecard as an image, and printing ---------- */
+export async function scorecardImage(m) {
+  if (!m) return;
+  try { await Promise.all(['800 40px "Saira Condensed"', '700 30px "Saira Condensed"', '600 20px Figtree', '400 20px Figtree'].map(f => document.fonts.load(f))); } catch { /* fallback fonts */ }
+  const W = 1200, P = 50, D = 'Saira Condensed, Arial Narrow, sans-serif', B = 'Figtree, system-ui, sans-serif';
+  const num = (x, t, at) => { x.textAlign = 'right'; x.fillText(String(t), at, x._y); x.textAlign = 'left'; };
+  // Draws the whole card and returns its height, so it can run once to measure and once for real.
+  const paint = x => {
+    x.fillStyle = '#08120f'; x.fillRect(0, 0, W, x.canvas.height);
+    for (let s = 0; s < W; s += 160) { x.fillStyle = 'rgba(255,255,255,0.022)'; x.fillRect(s, 0, 80, x.canvas.height); }
+    x.fillStyle = '#e95a4f'; x.beginPath(); x.arc(P + 22, 62, 22, 0, Math.PI * 2); x.fill();
+    x.fillStyle = '#e8f0eb'; x.font = `800 34px ${D}`; x.textBaseline = 'middle'; x.fillText('CREASE', P + 56, 64);
+    x.fillStyle = '#f3c24c'; x.font = `600 20px ${B}`; x.textAlign = 'right'; x.fillText(fitText(x, `${m.format || ''} · ${m.teams[0]} v ${m.teams[1]}`.toUpperCase(), 640), W - P, 64); x.textAlign = 'left';
+    x.textBaseline = 'alphabetic';
+    let y = 150;
+    x.fillStyle = '#ffffff'; x.font = `800 50px ${D}`; x.fillText(fitText(x, m.result || 'In progress', W - 2 * P), P, y);
+    y += 50;
+    m.inns.forEach((i, k) => {
+      const ex = i.extras, exT = ex.wd + ex.nb + ex.b + ex.lb + (ex.pen || 0);
+      x.fillStyle = '#11201b'; roundRect(x, P, y, W - 2 * P, 56, 12); x.fill(); x.strokeStyle = '#22392f'; x.lineWidth = 2; x.stroke();
+      x.fillStyle = '#e8f0eb'; x.font = `700 30px ${D}`; x.fillText(fitText(x, `${m.teams[i.bat]} · innings ${k + 1}`.toUpperCase(), 640), P + 20, y + 38);
+      x.fillStyle = '#f3c24c'; x._y = y + 38; num(x, `${i.runs}/${i.wkts} (${fmtOvers(i.balls)} ov)`, W - P - 20);
+      y += 92;
+      const cols = [['R', 840], ['B', 910], ['4s', 980], ['6s', 1050], ['SR', W - P]];
+      x.fillStyle = '#8ea398'; x.font = `600 16px ${B}`; x.fillText('BATTER', P, y); x.fillText('DISMISSAL', P + 300, y); x._y = y; cols.forEach(([l, at]) => num(x, l, at));
+      y += 12;
+      i.batters.forEach(b => {
+        y += 34; x._y = y;
+        x.fillStyle = 'rgba(255,255,255,0.05)'; x.fillRect(P, y - 25, W - 2 * P, 1);
+        x.fillStyle = '#e8f0eb'; x.font = `600 20px ${B}`; x.fillText(fitText(x, b.name + roleTag(m, i.bat, b.name), 285), P, y);
+        x.fillStyle = '#8ea398'; x.font = `400 18px ${B}`; x.fillText(fitText(x, howOf(b), 470), P + 300, y);
+        x.font = `600 20px ${B}`; x.fillStyle = '#ffffff'; num(x, b.runs, 840);
+        x.fillStyle = '#c3d1c9'; [b.balls, b.f4, b.f6, b.balls ? nf(b.runs / b.balls * 100, 1) : '—'].forEach((v, j) => num(x, v, cols[j + 1][1]));
+      });
+      y += 36;
+      x.fillStyle = '#a8bcb1'; x.font = `400 18px ${B}`;
+      x.fillText(fitText(x, `Extras ${exT} (b ${ex.b}, lb ${ex.lb}, w ${ex.wd}, nb ${ex.nb}${ex.pen ? `, pen ${ex.pen}` : ''})${i.target != null ? ` · Target ${i.target}${i.dls ? ' (DLS)' : ''}` : ''}`, W - 2 * P), P, y);
+      if (i.fow.length) { // wrap the fall of wickets over as many lines as it needs
+        let lineTxt = 'Fall of wickets: ';
+        i.fow.map(w => `${w.score}-${w.wkt} (${w.name}, ${w.over})`).forEach((part, j, all) => {
+          const add = part + (j < all.length - 1 ? ', ' : '');
+          if (x.measureText(lineTxt + add).width > W - 2 * P) { y += 26; x.fillText(lineTxt.trimEnd(), P, y); lineTxt = ''; }
+          lineTxt += add;
+        });
+        y += 26; x.fillText(lineTxt, P, y);
+      }
+      const bw = i.bowlers.filter(b => b.balls || b.runs);
+      if (bw.length) {
+        y += 44;
+        const bc = [['O', 760], ['M', 840], ['R', 920], ['W', 1000], ['ECON', W - P]];
+        x.fillStyle = '#8ea398'; x.font = `600 16px ${B}`; x.fillText('BOWLER', P, y); x._y = y; bc.forEach(([l, at]) => num(x, l, at));
+        y += 12;
+        bw.forEach(b => {
+          y += 34; x._y = y;
+          x.fillStyle = 'rgba(255,255,255,0.05)'; x.fillRect(P, y - 25, W - 2 * P, 1);
+          x.fillStyle = '#e8f0eb'; x.font = `600 20px ${B}`; x.fillText(fitText(x, b.name + roleTag(m, 1 - i.bat, b.name), 600), P, y);
+          x.fillStyle = '#c3d1c9';
+          [fmtOvers(b.balls), b.maidens, b.runs].forEach((v, j) => num(x, v, bc[j][1]));
+          x.fillStyle = '#ffffff'; num(x, b.wkts, 1000);
+          x.fillStyle = '#c3d1c9'; num(x, b.balls ? nf(b.runs / (b.balls / 6)) : '—', W - P);
+        });
+      }
+      y += 50;
+    });
+    x.fillStyle = '#5f7569'; x.font = `500 18px ${B}`; x.fillText(`Made with Crease · ${new Date(m.created || Date.now()).toLocaleDateString()}`, P, y + 6);
+    return y + 40;
+  };
+  const probe = document.createElement('canvas'); probe.width = W; probe.height = 1;
+  const H = Math.ceil(paint(probe.getContext('2d')));
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  paint(c.getContext('2d'));
+  const slug = `${m.teams[0]}-v-${m.teams[1]}`.replace(/[^\w-]+/g, '-');
+  c.toBlob(blob => { if (!blob) { toast('Could not create the image'); return; } showImageModal(blob, `${slug}-scorecard.png`, 'Scorecard image', 'Full scorecard'); }, 'image/png');
+}
+
+// Print just the scorecard. The browser's print dialog can also save it as a PDF.
+export function printScorecard(m) {
+  if (!m) return;
+  let host = document.getElementById('print-area');
+  if (!host) { host = document.createElement('div'); host.id = 'print-area'; document.body.appendChild(host); }
+  const title = `${m.teams[0]} v ${m.teams[1]}`;
+  host.innerHTML = `<h1>${esc(title)}</h1><p class="pa-result">${esc(m.result || 'In progress')}</p><p class="pa-meta">${esc(m.format || '')} · ${new Date(m.created || Date.now()).toLocaleDateString()}</p>${m.inns.map((_, k) => scorecardHTML(m, k)).join('')}`;
+  host.querySelectorAll('details.parts').forEach(d => { d.open = true; });
+  host.querySelectorAll('button').forEach(b => { b.replaceWith(Object.assign(document.createElement('span'), { className: b.className, textContent: b.textContent })); });
+  document.body.classList.add('printing');
+  const done = () => { document.body.classList.remove('printing'); window.removeEventListener('afterprint', done); };
+  window.addEventListener('afterprint', done);
+  try { window.print(); }
+  catch { done(); toast('Printing is blocked here. Use “Scorecard image” instead.'); }
+}
+
+// A saved or linked match's scorecard in a dialog, with image and print buttons.
+export function openScorecard(m, title) {
+  const body = openModal(title, `<p style="margin:0 0 12px;font-weight:700">${esc(m.result || 'In progress')}</p>${m.inns.map((_, k) => scorecardHTML(m, k)).join('')}
+    <div class="modal-actions"><button type="button" class="btn ghost" data-x="img">Scorecard image</button><button type="button" class="btn ghost" data-x="print">Print or save as PDF</button></div>`, { wide: true });
+  body.addEventListener('click', e => {
+    const x = e.target.closest('[data-x]');
+    if (!x) return;
+    if (x.dataset.x === 'img') scorecardImage(m); else printScorecard(m);
+  });
+}

@@ -8,7 +8,7 @@ import { $, esc, fx, nf, store, uid } from '../utils.js';
 import { batStats } from './batting.js';
 import { bowlStats } from './bowling.js';
 import { loadIntoCompare } from './compare.js';
-import { live, resumeMatch, scorecardCSV, scorecardHTML } from './live.js';
+import { live, openScorecard, resumeMatch, scorecardCSV } from './live.js';
 /* =====================================================================
    15. SAVED players & matches
    ===================================================================== */
@@ -58,7 +58,7 @@ RENDER.saved = function renderSaved() {
       <div class="mini">${mini}</div>
       <div class="acts">
         <button type="button" class="btn sm" data-sp="open" data-id="${esc(p.id)}">Open</button>
-        ${p.kind === 'bat' ? `<button type="button" class="btn ghost sm" data-sp="cmpa" data-id="${esc(p.id)}">Compare as A</button><button type="button" class="btn ghost sm" data-sp="cmpb" data-id="${esc(p.id)}">as B</button>` : ''}
+        <button type="button" class="btn ghost sm" data-sp="cmpa" data-id="${esc(p.id)}">Compare as A</button><button type="button" class="btn ghost sm" data-sp="cmpb" data-id="${esc(p.id)}">as B</button>
         <button type="button" class="btn ghost sm danger" data-sp="del" data-id="${esc(p.id)}">Delete</button>
       </div></div>`;
   }).join('') : `<div class="empty-state">No saved players yet. Use “Save player” on the Batting or Bowling tab.</div>`;
@@ -97,7 +97,7 @@ $('#tab-saved').addEventListener('click', async e => {
     const list = savedMatches();
     const m = list.find(x => x.id === sm.dataset.id);
     if (!m) return;
-    if (sm.dataset.sm === 'view') openModal(m.title, `<p style="margin:0 0 12px;font-weight:700">${esc(m.result)}</p>${m.data.inns.map((_, k) => scorecardHTML(m.data, k)).join('')}`, { wide: true });
+    if (sm.dataset.sm === 'view') openScorecard({ ...m.data, result: m.data.result || m.result }, m.title);
     else if (sm.dataset.sm === 'csv') showCSV(`${m.title.replace(/\s+/g, '-')}-scorecard.csv`, scorecardCSV(m.data));
     else if (sm.dataset.sm === 'resume') {
       if (live && live.id !== m.id && !(await confirmBox('Replace the current match?', 'The match in the live scorer will be replaced. Save it first if you want to keep it.', 'Replace', true))) return;

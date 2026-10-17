@@ -1,23 +1,11 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
 <title>Crease Cricket Calculator</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="description" content="Cricket stats calculator: batting, bowling, chase maths, NRR, DLS-style targets, impact ratings, player comparison and a ball-by-ball live scorer.">
 <meta name="theme-color" content="#08120f">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Crease">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="css/fonts.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Saira+Condensed:wght@500;600;700;800&display=swap">
 <link rel="stylesheet" href="css/base.css">
 <link rel="stylesheet" href="css/components.css">
-</head>
-<body>
 
 <header class="topbar">
   <div class="topbar-inner">
@@ -267,22 +255,31 @@
     <div class="panel-head">
       <div>
         <p class="eyebrow">Head to head</p>
-        <h1>Two batters, side by side</h1>
+        <h1 id="cmp-h1">Two batters, side by side</h1>
         <p class="lede">Load saved players or type their numbers in. The radar scores each skill against elite numbers for the format.</p>
       </div>
       <div class="head-actions">
+        <div class="seg" id="cmp-mode" role="group" aria-label="Compare"><button type="button" data-mode="bat" aria-pressed="true">Batters</button><button type="button" data-mode="bowl" aria-pressed="false">Bowlers</button></div>
         <button type="button" class="btn ghost" data-reset="compare">Reset example</button>
       </div>
     </div>
     <div class="layout cmp-layout">
       <div class="col-in">
-        <div class="card cmp-card a">
+        <div class="card cmp-card a" data-cmp="bat">
           <div class="cmp-head"><h2 class="card-title">Player A</h2><select id="cmp-load-a" class="select" aria-label="Load saved player into A"></select></div>
           <div class="fields" data-group="cmpA"></div>
         </div>
-        <div class="card cmp-card b">
+        <div class="card cmp-card b" data-cmp="bat">
           <div class="cmp-head"><h2 class="card-title">Player B</h2><select id="cmp-load-b" class="select" aria-label="Load saved player into B"></select></div>
           <div class="fields" data-group="cmpB"></div>
+        </div>
+        <div class="card cmp-card a" data-cmp="bowl" hidden>
+          <div class="cmp-head"><h2 class="card-title">Bowler A</h2><select id="cmp-load-wa" class="select" aria-label="Load saved bowler into A"></select></div>
+          <div class="fields" data-group="cmpWA"></div>
+        </div>
+        <div class="card cmp-card b" data-cmp="bowl" hidden>
+          <div class="cmp-head"><h2 class="card-title">Bowler B</h2><select id="cmp-load-wb" class="select" aria-label="Load saved bowler into B"></select></div>
+          <div class="fields" data-group="cmpWB"></div>
         </div>
         <ul class="warns" id="w-cmp" hidden></ul>
       </div>
@@ -346,6 +343,10 @@
       <div class="head-actions">
         <button type="button" class="btn ghost" id="pl-add">Add earlier stats</button>
       </div>
+    </div>
+    <div class="card" id="pl-ms-card" hidden>
+      <div class="sc-head" style="margin-bottom:10px"><h2 class="card-title" style="margin:0">Milestones</h2><span class="hint" id="pl-ms-sum" style="margin:0"></span></div>
+      <div id="pl-ms"></div>
     </div>
     <div class="card">
       <div class="pl-controls">
@@ -430,7 +431,7 @@
   </div>
 </div>
 
-<script src="vendor/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script type="module" src="js/main.js"></script>
-</body>
-</html>
+
+</body></html>
