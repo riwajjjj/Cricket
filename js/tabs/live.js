@@ -1637,8 +1637,26 @@ const POS_IN = ['Mid-off', 'Cover', 'Point', 'Slips and gully', 'Leg slip', 'Squ
 const POS_OUT = ['Long off', 'Deep cover', 'Deep point', 'Third man', 'Fine leg', 'Deep square leg', 'Deep midwicket', 'Long on'];
 const POS_SHORT = ['Mid-off', 'Cover', 'Point', 'Slips', 'Leg slip', 'Sq. leg', 'Mid-wkt', 'Mid-on'];
 const isInner = shot => Math.hypot(shot.x, shot.y) <= INNER_R;
-const posName = (shot, left) => (isInner(shot) ? POS_IN : POS_OUT)[sectorOf(shot, left)];
-const posHint = (z, inner) => `${SECTOR_HINT[z]}, ${inner ? 'close in (inside the circle)' : 'out towards the boundary'}`;
+// Every standard fielding position, found from the exact angle and distance of a tap.
+// Angles run clockwise from straight down the ground, towards the off side, for a right-hander.
+const CLOSE_R = 0.2;
+const DEEP16 = ['Long off', 'Deep extra cover', 'Deep cover', 'Deep cover point', 'Deep point', 'Deep backward point', 'Third man', 'Fine third man',
+  'Fine leg', 'Long leg', 'Deep backward square leg', 'Deep square leg', 'Deep forward square leg', 'Deep midwicket', 'Cow corner', 'Long on'];
+const RING16 = ['Mid-off', 'Extra cover', 'Cover', 'Cover point', 'Point', 'Backward point', 'Gully', 'Slips',
+  'Leg slip', 'Short fine leg', 'Backward square leg', 'Square leg', 'Forward square leg', 'Midwicket', 'Midwicket', 'Mid-on'];
+const CLOSE6 = [[45, 'Silly mid-off'], [135, 'Silly point'], [180, 'Slips'], [225, 'Leg slip'], [315, 'Short leg'], [360, 'Silly mid-on']];
+function fieldPos(shot, left) {
+  const x = left ? -shot.x : shot.x;
+  let ang = Math.atan2(x, -shot.y) * 180 / Math.PI; if (ang < 0) ang += 360;
+  const d = Math.hypot(shot.x, shot.y), band = Math.floor(ang / 22.5) % 16;
+  const name = d <= CLOSE_R ? CLOSE6.find(([to]) => ang < to)[1] : d <= INNER_R ? RING16[band] : DEEP16[band];
+  const side = ang < 180 ? 'off side' : 'leg side';
+  const off = ang < 180 ? ang : 360 - ang; // 0 = straight, 90 = square, 180 = straight behind
+  const dir = off < 30 ? 'straight' : off < 75 ? 'in front of square' : off < 105 ? 'square' : off < 150 ? 'behind square' : 'fine, behind the batter';
+  const dist = d <= CLOSE_R ? 'very close to the bat' : d <= INNER_R ? 'inside the circle' : 'out near the boundary';
+  return { name, hint: `${dir}, ${side}, ${dist}` };
+}
+const posName = (shot, left) => fieldPos(shot, left).name;
 const lefty = name => !!store.get('lefties', {})[nameKey(name)];
 const nameKey = s => String(s || '').trim().toLowerCase();
 function sectorOf(shot, left) {
@@ -1657,6 +1675,7 @@ function fieldSVG(shots, { left = false, picker = false } = {}) {
     <circle cx="${C}" cy="${C}" r="${R * 0.48}" class="ww-ring"/>
     ${[0, 1, 2, 3].map(k => { const a = k * Math.PI / 4; return `<line x1="${C - Math.sin(a) * R}" y1="${C - Math.cos(a) * R}" x2="${C + Math.sin(a) * R}" y2="${C + Math.cos(a) * R}" class="ww-grid"/>`; }).join('')}
     ${picker ? pickerZones(C, R, left) : ''}
+    ${picker ? `<circle cx="${C}" cy="${C}" r="${(R * CLOSE_R).toFixed(1)}" class="ww-fine"/>${Array.from({ length: 8 }, (_, w) => { const a = w * Math.PI / 4 + Math.PI / 8; return `<line x1="${(C + Math.sin(a) * R * CLOSE_R).toFixed(1)}" y1="${(C - Math.cos(a) * R * CLOSE_R).toFixed(1)}" x2="${(C + Math.sin(a) * R).toFixed(1)}" y2="${(C - Math.cos(a) * R).toFixed(1)}" class="ww-fine"/>`; }).join('')}` : ''}
     <rect x="${C - 5}" y="${C - 46}" width="10" height="46" rx="2" class="ww-pitch"/>
     ${lines}
     <circle cx="${C}" cy="${C}" r="4" class="ww-bat"/>
@@ -1693,7 +1712,7 @@ function withShot(ev) {
   const body = openModal(`Where did the ${batRuns === 4 ? 'four' : batRuns === 6 ? 'six' : batRuns === 1 ? 'single' : `${batRuns} runs`} go?`, `
     <p class="hint" style="margin:-6px 0 8px">${esc(bat)} · tap roughly where the ball went. The batter is the white dot, facing the bowler at the top. ${lefty(bat) ? 'Left-hander.' : 'Right-hander.'}</p>
     <div class="ww-pick">${fieldSVG([], { left: lefty(bat), picker: true })}</div>
-    <p class="ww-cap" id="ww-cap" aria-live="polite">Move over the field to see each position. Inside the dashed circle is close in; outside it is out towards the boundary.</p>
+    <p class="ww-cap" id="ww-cap" aria-live="polite">Move over the field to see the exact position. The small inner circle is close to the bat, the dashed circle is the inner ring, and beyond it is out near the boundary.</p>
     <div class="modal-actions"><label class="check" style="margin-right:auto"><input type="checkbox" id="ww-pick-lh"${lefty(bat) ? ' checked' : ''}> Left-handed batter</label><button type="button" class="btn ghost" data-x="skip">Skip</button></div>`, { onClose: () => finish(null) });
   const onTap = e => {
     const svg = e.currentTarget, rc = svg.getBoundingClientRect();
@@ -1706,8 +1725,12 @@ function withShot(ev) {
   body.querySelector('.ww-pick svg').addEventListener('click', onTap);
   // Name the zone under the pointer, so the scorer can check before tapping.
   body.querySelector('.ww-pick').addEventListener('pointermove', e => {
-    const z = e.target.closest?.('.ww-zone');
-    if (z) { const k = +z.dataset.z, inner = z.dataset.in === '1'; $('#ww-cap', body).innerHTML = `<b>${(inner ? POS_IN : POS_OUT)[k]}</b>: ${posHint(k, inner)}`; }
+    const svg = body.querySelector('.ww-pick svg'), rc = svg.getBoundingClientRect();
+    if (!rc.width) return;
+    const x = ((e.clientX - rc.left) / rc.width * 300 - 150) / 136, y = ((e.clientY - rc.top) / rc.height * 300 - 150) / 136;
+    if (Math.hypot(x, y) > 1.05) return;
+    const p = fieldPos({ x, y }, $('#ww-pick-lh', body).checked);
+    $('#ww-cap', body).innerHTML = `<b>${p.name}</b>: ${p.hint}`;
   });
   body.querySelector('#ww-pick-lh').addEventListener('change', e => {
     const l = store.get('lefties', {}); if (e.target.checked) l[nameKey(bat)] = true; else delete l[nameKey(bat)]; store.set('lefties', l);
