@@ -705,3 +705,6 @@ details.bbb summary:hover { color: var(--fg); }
 .ww-svg.picker .ww-lbl, .ww-svg.picker .ww-pitch, .ww-svg.picker .ww-bat { pointer-events: none; }
 .ww-cap { margin: 6px 0 0; text-align: center; font-size: 0.88rem; color: var(--fg-2); min-height: 1.3em; }
 .ww-cap b { color: var(--accent-text); }
+.ww-zin { font: 700 7.5px/1 var(--f-body); fill: var(--fg-2); pointer-events: none; }
+.ww-zone[data-in="1"] { fill: color-mix(in srgb, var(--turf) 8%, transparent); }
+.ww-zone[data-in="1"]:hover { fill: color-mix(in srgb, var(--accent) 26%, transparent); }

@@ -296,7 +296,7 @@ new MutationObserver(() => { if (modal.hidden && ballTarget) ballTarget = null; 
 let commSink = null;
 const say = (kind, text, o = '') => { if (commSink) commSink.push({ inn: live.inns.length - 1, o, kind, text }); };
 function commentBall({ i, ev, bw, st, cm, total, r, batRuns, stand, strikerBefore, nonBefore, noneLeft }) {
-  const where = ev.ww && batRuns > 0 && isFinite(ev.ww.x) && isFinite(ev.ww.y) ? ` to ${SECTORS[sectorOf(ev.ww, lefty(st.name))].toLowerCase()}` : '';
+  const where = ev.ww && batRuns > 0 && isFinite(ev.ww.x) && isFinite(ev.ww.y) ? ` to ${posName(ev.ww, lefty(st.name)).toLowerCase()}` : '';
   const big = n => (n === 4 ? 'FOUR' : n === 6 ? 'SIX' : plural(n, 'run'));
   let kind = 'ball', text = '';
   switch (ev.type) {
@@ -1631,6 +1631,14 @@ RENDER.live = () => renderLiveAll();
 const SECTORS = ['Long off', 'Cover', 'Point', 'Third man', 'Fine leg', 'Square leg', 'Midwicket', 'Long on'];
 // The same zones in plain words, for anyone who doesn't know the fielding positions.
 const SECTOR_HINT = ['straight, off side', 'in front, off side', 'square, off side', 'behind, off side', 'behind, leg side', 'square, leg side', 'in front, leg side', 'straight, leg side'];
+// Each direction split at the dashed inner circle (about the 30-yard circle): close-in and deep positions.
+const INNER_R = 0.48;
+const POS_IN = ['Mid-off', 'Cover', 'Point', 'Slips and gully', 'Leg slip', 'Square leg', 'Midwicket', 'Mid-on'];
+const POS_OUT = ['Long off', 'Deep cover', 'Deep point', 'Third man', 'Fine leg', 'Deep square leg', 'Deep midwicket', 'Long on'];
+const POS_SHORT = ['Mid-off', 'Cover', 'Point', 'Slips', 'Leg slip', 'Sq. leg', 'Mid-wkt', 'Mid-on'];
+const isInner = shot => Math.hypot(shot.x, shot.y) <= INNER_R;
+const posName = (shot, left) => (isInner(shot) ? POS_IN : POS_OUT)[sectorOf(shot, left)];
+const posHint = (z, inner) => `${SECTOR_HINT[z]}, ${inner ? 'close in (inside the circle)' : 'out towards the boundary'}`;
 const lefty = name => !!store.get('lefties', {})[nameKey(name)];
 const nameKey = s => String(s || '').trim().toLowerCase();
 function sectorOf(shot, left) {
@@ -1653,22 +1661,26 @@ function fieldSVG(shots, { left = false, picker = false } = {}) {
     ${lines}
     <circle cx="${C}" cy="${C}" r="4" class="ww-bat"/>
     ${side(offRight ? 236 : 64, 'OFF')}${side(offRight ? 64 : 236, 'LEG')}
-    <text x="${C}" y="${C - 54}" class="ww-lbl" text-anchor="middle">BOWLER</text>
+    <text x="${C}" y="${picker ? C - R + 16 : C - 54}" class="ww-lbl" text-anchor="middle">BOWLER</text>
     ${picker ? `<text x="${C}" y="${C + R + 14}" class="ww-lbl" text-anchor="middle">BEHIND THE BATTER</text>` : ''}
   </svg>`;
 }
-// Tap targets for the picker: eight wedges, each labelled with its name and what it means.
+// Tap targets for the picker: eight directions, each split into a close-in part (inside the dashed
+// circle) and a deep part, labelled with the fielding position.
 function pickerZones(C, R, left) {
+  const ri = R * INNER_R;
   return Array.from({ length: 8 }, (_, w) => {
     const a0 = w * Math.PI / 4, a1 = a0 + Math.PI / 4, mid = a0 + Math.PI / 8;
     const z = sectorOf({ x: Math.sin(mid), y: -Math.cos(mid) }, left);
     const pt = (a, r) => `${(C + Math.sin(a) * r).toFixed(1)} ${(C - Math.cos(a) * r).toFixed(1)}`;
-    const lx = C + Math.sin(mid) * R * 0.74, ly = C - Math.cos(mid) * R * 0.74;
+    const at = r => [C + Math.sin(mid) * r, C - Math.cos(mid) * r].map(v => v.toFixed(1));
+    const [ox, oy] = at(R * 0.76), [ix, iy] = at(ri * 0.8);
     const [h1, h2] = SECTOR_HINT[z].split(', ');
-    return `<path d="M${C} ${C} L${pt(a0, R)} A${R} ${R} 0 0 1 ${pt(a1, R)} Z" class="ww-zone" data-z="${z}"/>
-      <text x="${lx.toFixed(1)}" y="${(ly - 4).toFixed(1)}" class="ww-zname" text-anchor="middle">${SECTORS[z]}</text>
-      <text x="${lx.toFixed(1)}" y="${(ly + 8).toFixed(1)}" class="ww-zhint" text-anchor="middle">${h1}</text>
-      <text x="${lx.toFixed(1)}" y="${(ly + 18).toFixed(1)}" class="ww-zhint" text-anchor="middle">${h2}</text>`;
+    return `<path d="M${C} ${C} L${pt(a0, ri)} A${ri} ${ri} 0 0 1 ${pt(a1, ri)} Z" class="ww-zone" data-z="${z}" data-in="1"/>
+      <path d="M${pt(a0, ri)} L${pt(a0, R)} A${R} ${R} 0 0 1 ${pt(a1, R)} L${pt(a1, ri)} A${ri} ${ri} 0 0 0 ${pt(a0, ri)} Z" class="ww-zone" data-z="${z}" data-in="0"/>
+      <text x="${ox}" y="${(+oy - 4).toFixed(1)}" class="ww-zname" text-anchor="middle">${POS_OUT[z]}</text>
+      <text x="${ox}" y="${(+oy + 8).toFixed(1)}" class="ww-zhint" text-anchor="middle">${h1} · ${h2}</text>
+      <text x="${ix}" y="${(+iy + 3).toFixed(1)}" class="ww-zin" text-anchor="middle">${POS_SHORT[z]}</text>`;
   }).join('');
 }
 // Ask where a scoring shot went (if the scorer has turned this on), then record the ball.
@@ -1681,7 +1693,7 @@ function withShot(ev) {
   const body = openModal(`Where did the ${batRuns === 4 ? 'four' : batRuns === 6 ? 'six' : batRuns === 1 ? 'single' : `${batRuns} runs`} go?`, `
     <p class="hint" style="margin:-6px 0 8px">${esc(bat)} · tap roughly where the ball went. The batter is the white dot, facing the bowler at the top. ${lefty(bat) ? 'Left-hander.' : 'Right-hander.'}</p>
     <div class="ww-pick">${fieldSVG([], { left: lefty(bat), picker: true })}</div>
-    <p class="ww-cap" id="ww-cap" aria-live="polite">Move over the field to see each area's name.</p>
+    <p class="ww-cap" id="ww-cap" aria-live="polite">Move over the field to see each position. Inside the dashed circle is close in; outside it is out towards the boundary.</p>
     <div class="modal-actions"><label class="check" style="margin-right:auto"><input type="checkbox" id="ww-pick-lh"${lefty(bat) ? ' checked' : ''}> Left-handed batter</label><button type="button" class="btn ghost" data-x="skip">Skip</button></div>`, { onClose: () => finish(null) });
   const onTap = e => {
     const svg = e.currentTarget, rc = svg.getBoundingClientRect();
@@ -1695,7 +1707,7 @@ function withShot(ev) {
   // Name the zone under the pointer, so the scorer can check before tapping.
   body.querySelector('.ww-pick').addEventListener('pointermove', e => {
     const z = e.target.closest?.('.ww-zone');
-    if (z) $('#ww-cap', body).innerHTML = `<b>${SECTORS[+z.dataset.z]}</b>: ${SECTOR_HINT[+z.dataset.z]}`;
+    if (z) { const k = +z.dataset.z, inner = z.dataset.in === '1'; $('#ww-cap', body).innerHTML = `<b>${(inner ? POS_IN : POS_OUT)[k]}</b>: ${posHint(k, inner)}`; }
   });
   body.querySelector('#ww-pick-lh').addEventListener('change', e => {
     const l = store.get('lefties', {}); if (e.target.checked) l[nameKey(bat)] = true; else delete l[nameKey(bat)]; store.set('lefties', l);
