@@ -1,5 +1,5 @@
 import { alpha, axes, baseOpts, chart, pal } from '../charts.js';
-import { fitText, roundRect, shareImage, showCSV, showImageModal, toCSV } from '../export.js';
+import { copyText, fitText, roundRect, shareImage, showCSV, showImageModal, toCSV } from '../export.js';
 import { tipBtn } from '../groups.js';
 import { DLS, fmtOvers, parseOvers, profileFor, winProb } from '../maths.js';
 import { RENDER, nav } from '../router.js';
@@ -37,7 +37,17 @@ function newPart(i) {
 // Balls this innings may last: the overs per side, less anything taken off for rain.
 export const maxBallsOf = (i, m = live) => i.maxBalls ?? (m.overs ? m.overs * 6 : null);
 export const cur = () => live.inns[live.inns.length - 1];
-export function saveLive() { store.set('live', live); store.set('liveUndo', undoStack.slice(-40)); }
+// The match is saved after every action. The undo history (up to 40 full copies of the match, several
+// megabytes in a long Test) is written once scoring pauses, and when the page is closed.
+let undoSaveTimer = 0;
+const saveUndo = () => { clearTimeout(undoSaveTimer); undoSaveTimer = 0; store.set('liveUndo', undoStack.slice(-40)); };
+export function saveLive() {
+  store.set('live', live);
+  clearTimeout(undoSaveTimer);
+  undoSaveTimer = setTimeout(saveUndo, 1500);
+}
+window.addEventListener('pagehide', () => { if (undoSaveTimer) saveUndo(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && undoSaveTimer) saveUndo(); });
 
 export const howOf = b => (b.out || b.retired) ? b.how : 'not out';
 const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -164,6 +174,7 @@ function coreBall(ev) {
   const bw = i.bowlers[i.bowler];
   const strikerBefore = i.striker, nonBefore = i.non;
   const st = i.batters[i.striker];
+  const cm = commSink ? { ballNo: `${Math.floor(i.balls / 6)}.${(i.balls % 6) + 1}`, runsBefore: st.runs, wkBefore: bw.wkts, partBefore: i.part.runs } : null;
   let legal = true, total = 0, bowlerRuns = 0, ran = 0, label = '', cls = '', noneLeft = false;
   const r = ev.runs || 0;
   const dot = () => { st.dots = (st.dots || 0) + 1; };
@@ -237,6 +248,7 @@ function coreBall(ev) {
 
   if (ran % 2 === 1) { const t = i.striker; i.striker = i.non; i.non = t; }
 
+  const stand = { runs: i.part.runs, balls: i.part.balls }; // the partnership including this ball
   if (ev.type === 'wkt') {
     const outIdx = ev.how === 'run out' && ev.outWho === 'non' ? nonBefore : strikerBefore;
     const ob = i.batters[outIdx];
@@ -262,6 +274,10 @@ function coreBall(ev) {
     if (over.legal === 6 && over.bowlerRuns === 0) bw.maidens++;
     const t = i.striker; i.striker = i.non; i.non = t;
   }
+  if (cm) {
+    commentBall({ i, ev, bw, st, cm, total, r, batRuns, stand, strikerBefore, nonBefore, noneLeft });
+    if (overDone) commentOver(i, over, bw);
+  }
 
   const cap = maxBallsOf(i);
   const oversDone = cap != null && i.balls >= cap;
@@ -273,6 +289,162 @@ function coreBall(ev) {
 let ballTarget = null; // { mode: 'replace' | 'insert', li } while a past ball is being edited
 // If an edit's follow-up dialog is cancelled, forget the pending edit (checked after any synchronous submit).
 new MutationObserver(() => { if (modal.hidden && ballTarget) ballTarget = null; }).observe(modal, { attributes: true, attributeFilter: ['hidden'] });
+/* ---------- Commentary ----------
+   Not stored: it is rebuilt by replaying the match's action log on a scratch copy, with commSink
+   collecting lines as each ball is scored. Edited balls therefore correct the commentary too, and
+   saved matches get it as well. Matches scored before the action log existed have none. */
+let commSink = null;
+const say = (kind, text, o = '') => { if (commSink) commSink.push({ inn: live.inns.length - 1, o, kind, text }); };
+function commentBall({ i, ev, bw, st, cm, total, r, batRuns, stand, strikerBefore, nonBefore, noneLeft }) {
+  const where = ev.ww && batRuns > 0 && isFinite(ev.ww.x) && isFinite(ev.ww.y) ? ` to ${SECTORS[sectorOf(ev.ww, lefty(st.name))].toLowerCase()}` : '';
+  const big = n => (n === 4 ? 'FOUR' : n === 6 ? 'SIX' : plural(n, 'run'));
+  let kind = 'ball', text = '';
+  switch (ev.type) {
+    case 'run':
+      if (ev.ot) text = `${plural(r, 'run')}, overthrows included${where}`;
+      else if (r === 4 || r === 6) { kind = r === 4 ? 'four' : 'six'; text = `${big(r)}${where}`; }
+      else text = r === 0 ? 'no run' : `${plural(r, 'run')}${where}`;
+      break;
+    case 'wd': kind = 'extra'; text = total === 1 ? 'wide' : `wide, ${total} runs in all`; break;
+    case 'nb':
+      kind = r === 4 ? 'four' : r === 6 ? 'six' : 'extra';
+      text = r ? `no-ball, and ${big(r)} off the bat${where}` : 'no-ball';
+      if (!isTest()) text += '. Free hit next';
+      break;
+    case 'b': kind = 'extra'; text = plural(r, 'bye'); break;
+    case 'lb': kind = 'extra'; text = plural(r, 'leg bye'); break;
+    case 'wkt': {
+      kind = 'wkt';
+      const ob = i.batters[ev.how === 'run out' && ev.outWho === 'non' ? nonBefore : strikerBefore];
+      text = `OUT! ${ob.name} ${ob.how}, ${ob.runs} (${ob.balls})${ev.ball === 'wd' ? ', off a wide' : ev.ball === 'nb' ? ', off a no-ball' : ''}${ev.how === 'run out' && r ? `, after ${plural(r, 'run')}` : ''}`;
+      break;
+    }
+    default: return;
+  }
+  say(kind, `${bw.name} to ${st.name}, ${text}`, cm.ballNo);
+  const x = [...BAT_MARKS].reverse().find(m => cm.runsBefore < m && st.runs >= m);
+  if (x) say('ms', `${cap1(markName(x))} for ${st.name}: ${st.runs} off ${plural(st.balls, 'ball')}`);
+  if (cm.wkBefore < 10 && bw.wkts >= 10) say('ms', `All ten for ${bw.name}: ${bw.wkts}/${bw.runs}`);
+  else if (cm.wkBefore < 5 && bw.wkts >= 5) say('ms', `Five-for for ${bw.name}: ${bw.wkts}/${bw.runs}`);
+  if (ev.type === 'wkt') {
+    const outK = ev.how === 'run out' && ev.outWho === 'non' ? nonBefore : strikerBefore;
+    const survivor = outK === strikerBefore ? nonBefore : strikerBefore;
+    const inK = [i.striker, i.non].find(k => k !== survivor);
+    say('fow', `Fall of wicket: ${i.runs}/${i.wkts} (${i.batters[outK].name}, ${fmtOvers(i.balls)} ov). The stand was ${stand.runs} off ${plural(stand.balls, 'ball')}.${!noneLeft && i.batters[inK] ? ` ${i.batters[inK].name} comes in.` : ''}`);
+  } else {
+    const px = [...PART_MARKS].reverse().find(m => cm.partBefore < m && i.part.runs >= m);
+    if (px) say('ms', `${px}-run partnership between ${i.batters[i.striker].name} and ${i.batters[i.non].name}`);
+  }
+}
+function commentOver(i, over, bw) {
+  const crease = [i.striker, i.non].map(k => i.batters[k]).filter(b => b && !b.out).map(b => `${b.name} ${b.runs}* (${b.balls})`).join(', ');
+  const cap = maxBallsOf(i);
+  const chase = i.target != null && i.target > i.runs && cap != null && cap > i.balls ? ` · need ${i.target - i.runs} off ${plural(cap - i.balls, 'ball')}` : '';
+  const maiden = over.legal === 6 && over.bowlerRuns === 0;
+  say('over', `End of over ${i.balls / 6}: ${plural(over.runs, 'run')}${maiden ? ' (maiden)' : ''}${over.wkts ? `, ${plural(over.wkts, 'wicket')}` : ''} · ${live.teams[i.bat]} ${i.runs}/${i.wkts}${chase}${crease ? ` · ${crease}` : ''} · ${bw.name} ${fmtOvers(bw.balls)}-${bw.maidens}-${bw.runs}-${bw.wkts}`);
+}
+// Lines for actions other than balls, worked out from the match before and after the action.
+function commentAction(e, before) {
+  const i = cur();
+  switch (e.t) {
+    case 'bowler': {
+      const b = i.bowlers[i.bowler];
+      if (b && b.balls === 0 && !before.bowlers.includes(b.name.toLowerCase())) say('event', `${b.name} comes into the attack`);
+      break;
+    }
+    case 'start2': {
+      const team = live.teams[i.bat];
+      say('event', `${team} begin the ${ORD[live.inns.length - 1]} innings${i.target != null ? `, needing ${i.target} to win${i.dls && i.maxBalls != null ? ` off ${fmtOvers(i.maxBalls)} overs (DLS)` : ''}` : ''}. ${i.batters[0].name} and ${i.batters[1].name} open; ${i.bowlers[0].name} to bowl.`);
+      break;
+    }
+    case 'retire': { const r = i.batters.find(b => b.retired && before.crease.includes(b.name)); if (r) say('event', `${r.name} retires hurt, ${r.runs} (${r.balls})`); break; }
+    case 'pen': say('event', `5 penalty runs to ${e.bat ? live.teams[i.bat] : live.teams[1 - i.bat]}`); break;
+    case 'session': { const s = live.sessions?.[live.sessions.length - 1]; if (s) say('session', `${s.label}, day ${s.day}: ${s.text}`); break; }
+    case 'newball': say('event', `New ball taken after ${fmtOvers(i.balls - (before.newBallFrom || 0))} overs`); break;
+    case 'rain': {
+      const k = live.inns.length - 1, stop = live.rain?.stops[k]?.slice(-1)[0];
+      if (!stop) break;
+      const inn = live.inns[k];
+      say('event', `Rain stops play: ${fmtOvers(stop.lost)} overs lost.${k === 1 && inn.dls ? ` Revised target ${inn.target} off ${fmtOvers(inn.maxBalls)} overs.` : k === 0 && !inn.ended ? ` ${live.teams[inn.bat]} now have ${fmtOvers(inn.maxBalls)} overs.` : ''}`);
+      break;
+    }
+    default: break;
+  }
+}
+export function commentaryOf(m) {
+  if (!m || !m.init || !Array.isArray(m.log)) return null;
+  // Scoring only appends to the log, so pick up the replay where it stopped last time.
+  let st = commState.get(m.log);
+  if (!st || st.k > m.log.length) {
+    st = { scratch: null, k: 0, out: [], ended: new Set(), failed: false };
+    commState.set(m.log, st);
+  }
+  if (st.k === m.log.length || st.failed) return st.out;
+  const keep = { live, replaying, curLi };
+  try {
+    replaying = true; commSink = st.out;
+    if (!st.scratch) {
+      live = JSON.parse(m.init); live.init = m.init; live.log = [];
+      const i0 = live.inns[0];
+      say('event', `${live.teams[0]} v ${live.teams[1]}${live.format ? `, ${live.format}` : ''}. ${live.teams[i0.bat]} bat first: ${i0.batters[0].name} and ${i0.batters[1].name} open; ${i0.bowlers[0].name} to bowl.`);
+      st.scratch = live;
+    } else live = st.scratch;
+    for (; st.k < m.log.length; st.k++) {
+      curLi = st.k;
+      const c = cur();
+      const before = { bowlers: c.bowlers.map(b => b.name.toLowerCase()), crease: [c.batters[c.striker]?.name, c.batters[c.non]?.name], newBallFrom: c.newBall || 0 };
+      if (runEntry(m.log[st.k])) { st.failed = true; break; }
+      if (m.log[st.k].t !== 'ball') commentAction(m.log[st.k], before);
+      live.inns.forEach((inn, j) => {
+        if (!inn.ended || st.ended.has(j)) return;
+        st.ended.add(j);
+        commSink.push({ inn: j, o: '', kind: 'end', text: `${live.teams[inn.bat]} ${scoreTxt(inn)} (${fmtOvers(inn.balls)} ov): ${endedText(inn.ended, live)}` });
+      });
+      if (live.status === 'done' && live.result && !st.out.some(x => x.kind === 'result')) say('result', live.result);
+    }
+  } finally {
+    ({ live, replaying, curLi } = keep);
+    commSink = null;
+  }
+  return st.out;
+}
+// One replay per log array: identity changes on undo, edits and loading a saved match, so those start afresh.
+const commState = new WeakMap();
+const commLi = e => `<li class="cm cm-${e.kind}"><span class="cm-o">${esc(e.o)}</span><span class="cm-t">${esc(e.text)}</span></li>`;
+// Latest lines for the scorer. Built just after the screen updates, so a ball never waits for it.
+let commTimer = 0;
+function commentaryCardHTML(m = live) {
+  if (!m || !m.init || !Array.isArray(m.log)) return '';
+  const st = commState.get(m.log);
+  const hit = st && st.k === m.log.length ? st.out : null;
+  if (!hit) { clearTimeout(commTimer); commTimer = setTimeout(fillCommentary, 20); }
+  return `<div class="card comm-card">
+    <div class="sc-head" style="margin-bottom:10px"><h2 class="card-title" style="margin:0">Commentary</h2><button type="button" class="btn ghost sm" data-act="comm">Full commentary</button></div>
+    <ul class="cm-list" id="comm-latest">${hit ? latestHTML(hit) : '<li class="cm"><span class="cm-o"></span><span class="cm-t dim">Writing the commentary…</span></li>'}</ul>
+  </div>`;
+}
+const latestHTML = list => (list.length ? list.slice(-10).reverse().map(commLi).join('') : '<li class="cm"><span class="cm-o"></span><span class="cm-t dim">The first ball goes here.</span></li>');
+function fillCommentary() {
+  const el = $('#comm-latest');
+  if (!el || !live) return;
+  const list = commentaryOf(live);
+  if (list) el.innerHTML = latestHTML(list);
+}
+// The whole match, newest first, grouped by innings, with a plain-text copy.
+export function openCommentary(m, title) {
+  const list = commentaryOf(m);
+  if (!list) { toast('This match was scored before commentary existed.'); return; }
+  const groups = [];
+  list.forEach(e => { const g = groups[groups.length - 1]; if (g && g.inn === e.inn) g.items.push(e); else groups.push({ inn: e.inn, items: [e] }); });
+  const head = k => { const inn = m.inns[k]; return inn ? `${m.teams[inn.bat]} · ${isTest(m) ? `${ORD[k]} innings` : `innings ${k + 1}`}` : ''; };
+  const text = list.map(e => `${e.o ? e.o + '  ' : ''}${e.text}`).join('\n');
+  const body = openModal(`Commentary: ${title}`, `
+    <div class="modal-actions" style="justify-content:flex-start;margin:-4px 0 12px"><button type="button" class="btn ghost sm" data-x="copy">Copy as text</button></div>
+    ${groups.reverse().map(g => `<p class="modal-sub" style="margin:14px 0 6px">${esc(head(g.inn))}</p><ul class="cm-list">${g.items.slice().reverse().map(commLi).join('')}</ul>`).join('')}
+    <textarea class="csv-box" readonly aria-label="Commentary as text" hidden>${esc(text)}</textarea>`, { wide: true });
+  body.addEventListener('click', e => { if (e.target.closest('[data-x="copy"]')) copyText(text, $('.csv-box', body)); });
+}
+
 /* ---------- Milestones in play ----------
    Chips under the scoreboard when a batter, bowler or partnership is close to a landmark,
    and a toast when one is reached. */
@@ -589,7 +761,7 @@ export const todayBalls = (m = live) => ballsOf(snapInns(m)) - ballsOf(clockOf(m
 // Balls left in the match: what's left of today plus the remaining days. Overs bowled beyond 90 in a day
 // (if Stumps is never pressed) come out of the days still to come.
 export const matchBallsLeft = (m = live) => Math.max(0, ((m.days || 5) - clockOf(m).day + 1) * DAY_BALLS - todayBalls(m));
-const scoreTxt = i => (i.ended === 'all out' ? `${i.runs} all out` : `${i.runs}/${i.wkts}${i.ended === 'declared' ? ' dec' : ''}`);
+const scoreTxt = (i, m = live) => (i.ended === 'all out' ? `${i.runs} all out` : `${i.runs}/${i.wkts}${i.ended === 'declared' && isTest(m) ? ' dec' : ''}`);
 function leadShort(m = live) {
   const i = m.inns[m.inns.length - 1];
   if (m.inns.length === 1) return '';
@@ -976,6 +1148,7 @@ export function startMatch() {
   if (test) { live.matchType = 'test'; live.days = Number(g('ls-days')) || 5; live.followOn = FOLLOW_ON[live.days] || 200; live.clock = { day: 1, s: 0, start: [], dayStart: [] }; live.sessions = []; }
   if (prefill?.link) live.tournament = prefill.link;
   prefill = null;
+  bbbOpen.clear();
   live.init = JSON.stringify(live); // the starting point the action log replays from
   live.log = [];
   undoStack = [];
@@ -1109,6 +1282,7 @@ export function liveHTML(animateLast) {
         <div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th></tr></thead>
         <tbody>${(i.needBowler && prevBowler ? [prevBowler] : [bw]).map(b => `<tr><td>${esc(b.name + roleTag(live, 1 - i.bat, b.name))}</td><td class="num">${fmtOvers(b.balls)}</td><td class="num">${b.maidens}</td><td class="num">${b.runs}</td><td class="num"><b>${b.wkts}</b></td><td class="num">${b.balls ? nf(b.runs / (b.balls / 6)) : '—'}</td></tr>`).join('')}</tbody></table></div>
       </div>
+      ${commentaryCardHTML()}
       ${matchupsCard(i)}
       ${lastOvers.length ? `<div class="card"><h2 class="card-title">Recent overs</h2><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><tbody>${lastOvers.map(o => { const n = i.overs.indexOf(o) + 1; return `<tr><td class="dim">Ov ${n}</td><td>${esc(i.bowlers[o.bowler].name)}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true)).join('')}</span></td><td class="num"><b>${o.runs}</b>${o.wkts ? ` <span class="neg">${o.wkts}w</span>` : ''}</td></tr>`; }).join('')}</tbody></table></div></div>` : ''}
     </div>
@@ -1342,6 +1516,12 @@ function partsHTML(m, i) {
   const who = r => r.names.length ? r.names.map(n => `${esc(n.name)} <span class="dim">${n.r} (${n.b})</span>`).join(' &amp; ') : '<span class="dim">—</span>';
   return `<details class="bbb parts"><summary>Partnerships · best ${best.runs}${best.open ? '*' : ''} for the ${ordW(best.w)} wicket</summary><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Wkt</th><th>Batters</th><th class="num">Runs</th><th class="num">Balls</th></tr></thead><tbody>${rows.map(r => `<tr><td class="dim">${ordW(r.w)}</td><td style="white-space:normal">${who(r)}</td><td class="num"><b>${r.runs}${r.open ? '*' : ''}</b></td><td class="num">${r.balls ?? '—'}</td></tr>`).join('')}</tbody></table></div>${rows.some(r => r.open) ? '<p class="sc-meta">* unbroken</p>' : ''}</details>`;
 }
+// The over-by-over table inside a scorecard's "Ball by ball" section.
+function bbbBody(m, i) {
+  const ov = i.overs.filter(o => o.balls.length);
+  return `<div class="tbl-wrap"><table class="tbl"><tbody>${ov.map(o => `<tr><td class="dim">Ov ${i.overs.indexOf(o) + 1}</td><td>${esc(i.bowlers[o.bowler]?.name || '')}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true, m)).join('')}</span></td><td class="num"><b>${o.runs}</b></td></tr>`).join('')}</tbody></table></div>`;
+}
+const bbbOpen = new Set(); // which live innings have "Ball by ball" open, kept across re-renders
 export function scorecardHTML(m, idx) {
   const i = m.inns[idx];
   const team = m.teams[i.bat];
@@ -1365,7 +1545,9 @@ export function scorecardHTML(m, idx) {
     const ov = i.overs.filter(o => o.balls.length);
     if (!ov.length) return '';
     const edit = m === live && canEdit();
-    return `<details class="bbb"><summary>Ball by ball${edit ? ' · tap a ball to fix it' : ''}</summary><div class="tbl-wrap"><table class="tbl"><tbody>${ov.map(o => `<tr><td class="dim">Ov ${i.overs.indexOf(o) + 1}</td><td>${esc(i.bowlers[o.bowler]?.name || '')}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true, m)).join('')}</span></td><td class="num"><b>${o.runs}</b></td></tr>`).join('')}</tbody></table></div></details>`;
+    // In the live match the overs are only drawn when the section is open, so scoring a ball doesn't redraw them all.
+    const lazy = m === live && !bbbOpen.has(idx);
+    return `<details class="bbb" data-bbb="${idx}"${m === live && bbbOpen.has(idx) ? ' open' : ''}><summary>Ball by ball${edit ? ' · tap a ball to fix it' : ''}</summary>${lazy ? '' : bbbBody(m, i)}</details>`;
   })()}
     ${bowls ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th><th class="num">Dots</th><th class="num">Wd/Nb</th></tr></thead><tbody>${bowls}</tbody></table></div>` : ''}
   </div>`;
@@ -1437,7 +1619,7 @@ export function renderLiveAll(animateLast = false) {
   }
   main.innerHTML = live.status === 'live' ? liveHTML(animateLast) : live.status === 'break' ? breakHTML() : doneHTML();
   actions.innerHTML = `${live.status !== 'done' ? `<button type="button" class="btn ghost" data-act="save-match">Save progress</button>` : ''}<button type="button" class="btn ghost danger" data-act="new">New match</button>`;
-  cards.innerHTML = daysHTML(live) + live.inns.map((_, k) => scorecardHTML(live, k)).join('');
+  cards.innerHTML = (live.status !== 'live' ? commentaryCardHTML() : '') + daysHTML(live) + live.inns.map((_, k) => scorecardHTML(live, k)).join('');
   paintSituation();
   liveCharts(live);
   if (live.status === 'live' && cur().needBowler) setTimeout(() => $('#live-bowler')?.focus({ preventScroll: true }), 30);
@@ -1447,6 +1629,8 @@ RENDER.live = () => renderLiveAll();
 /* ---------- Wagon wheel ---------- */
 // Field drawn from behind the batter: straight down the ground is up. For a right-hander the off side is on the right.
 const SECTORS = ['Long off', 'Cover', 'Point', 'Third man', 'Fine leg', 'Square leg', 'Midwicket', 'Long on'];
+// The same zones in plain words, for anyone who doesn't know the fielding positions.
+const SECTOR_HINT = ['straight, off side', 'in front, off side', 'square, off side', 'behind, off side', 'behind, leg side', 'square, leg side', 'in front, leg side', 'straight, leg side'];
 const lefty = name => !!store.get('lefties', {})[nameKey(name)];
 const nameKey = s => String(s || '').trim().toLowerCase();
 function sectorOf(shot, left) {
@@ -1464,12 +1648,28 @@ function fieldSVG(shots, { left = false, picker = false } = {}) {
     <ellipse cx="${C}" cy="${C}" rx="${R}" ry="${R}" class="ww-ground"/>
     <circle cx="${C}" cy="${C}" r="${R * 0.48}" class="ww-ring"/>
     ${[0, 1, 2, 3].map(k => { const a = k * Math.PI / 4; return `<line x1="${C - Math.sin(a) * R}" y1="${C - Math.cos(a) * R}" x2="${C + Math.sin(a) * R}" y2="${C + Math.cos(a) * R}" class="ww-grid"/>`; }).join('')}
+    ${picker ? pickerZones(C, R, left) : ''}
     <rect x="${C - 5}" y="${C - 46}" width="10" height="46" rx="2" class="ww-pitch"/>
     ${lines}
     <circle cx="${C}" cy="${C}" r="4" class="ww-bat"/>
     ${side(offRight ? 236 : 64, 'OFF')}${side(offRight ? 64 : 236, 'LEG')}
     <text x="${C}" y="${C - 54}" class="ww-lbl" text-anchor="middle">BOWLER</text>
+    ${picker ? `<text x="${C}" y="${C + R + 14}" class="ww-lbl" text-anchor="middle">BEHIND THE BATTER</text>` : ''}
   </svg>`;
+}
+// Tap targets for the picker: eight wedges, each labelled with its name and what it means.
+function pickerZones(C, R, left) {
+  return Array.from({ length: 8 }, (_, w) => {
+    const a0 = w * Math.PI / 4, a1 = a0 + Math.PI / 4, mid = a0 + Math.PI / 8;
+    const z = sectorOf({ x: Math.sin(mid), y: -Math.cos(mid) }, left);
+    const pt = (a, r) => `${(C + Math.sin(a) * r).toFixed(1)} ${(C - Math.cos(a) * r).toFixed(1)}`;
+    const lx = C + Math.sin(mid) * R * 0.74, ly = C - Math.cos(mid) * R * 0.74;
+    const [h1, h2] = SECTOR_HINT[z].split(', ');
+    return `<path d="M${C} ${C} L${pt(a0, R)} A${R} ${R} 0 0 1 ${pt(a1, R)} Z" class="ww-zone" data-z="${z}"/>
+      <text x="${lx.toFixed(1)}" y="${(ly - 4).toFixed(1)}" class="ww-zname" text-anchor="middle">${SECTORS[z]}</text>
+      <text x="${lx.toFixed(1)}" y="${(ly + 8).toFixed(1)}" class="ww-zhint" text-anchor="middle">${h1}</text>
+      <text x="${lx.toFixed(1)}" y="${(ly + 18).toFixed(1)}" class="ww-zhint" text-anchor="middle">${h2}</text>`;
+  }).join('');
 }
 // Ask where a scoring shot went (if the scorer has turned this on), then record the ball.
 function withShot(ev) {
@@ -1479,8 +1679,9 @@ function withShot(ev) {
   let done = false;
   const finish = ww => { if (done) return; done = true; applyBall(ww ? { ...ev, ww } : ev); };
   const body = openModal(`Where did the ${batRuns === 4 ? 'four' : batRuns === 6 ? 'six' : batRuns === 1 ? 'single' : `${batRuns} runs`} go?`, `
-    <p class="hint" style="margin:-6px 0 8px">${esc(bat)} · tap the field. ${lefty(bat) ? 'Left-hander.' : 'Right-hander.'}</p>
+    <p class="hint" style="margin:-6px 0 8px">${esc(bat)} · tap roughly where the ball went. The batter is the white dot, facing the bowler at the top. ${lefty(bat) ? 'Left-hander.' : 'Right-hander.'}</p>
     <div class="ww-pick">${fieldSVG([], { left: lefty(bat), picker: true })}</div>
+    <p class="ww-cap" id="ww-cap" aria-live="polite">Move over the field to see each area's name.</p>
     <div class="modal-actions"><label class="check" style="margin-right:auto"><input type="checkbox" id="ww-pick-lh"${lefty(bat) ? ' checked' : ''}> Left-handed batter</label><button type="button" class="btn ghost" data-x="skip">Skip</button></div>`, { onClose: () => finish(null) });
   const onTap = e => {
     const svg = e.currentTarget, rc = svg.getBoundingClientRect();
@@ -1491,6 +1692,11 @@ function withShot(ev) {
     closeModal();
   };
   body.querySelector('.ww-pick svg').addEventListener('click', onTap);
+  // Name the zone under the pointer, so the scorer can check before tapping.
+  body.querySelector('.ww-pick').addEventListener('pointermove', e => {
+    const z = e.target.closest?.('.ww-zone');
+    if (z) $('#ww-cap', body).innerHTML = `<b>${SECTORS[+z.dataset.z]}</b>: ${SECTOR_HINT[+z.dataset.z]}`;
+  });
   body.querySelector('#ww-pick-lh').addEventListener('change', e => {
     const l = store.get('lefties', {}); if (e.target.checked) l[nameKey(bat)] = true; else delete l[nameKey(bat)]; store.set('lefties', l);
     body.querySelector('.ww-pick').innerHTML = fieldSVG([], { left: e.target.checked, picker: true });
@@ -1761,6 +1967,7 @@ export async function liveAction(action, el) {
       if (err) toast(`Can't do that: ${err}.`); else toast(live.status === 'done' ? live.result : `${live.sessions[live.sessions.length - 1].label}: ${live.sessions[live.sessions.length - 1].text}`);
       break;
     }
+    case 'comm': openCommentary(live, `${live.teams[0]} v ${live.teams[1]}`); break;
     case 'newball': { const err = act({ t: 'newball' }, coreNewBall); toast(err ? `Can't do that: ${err}.` : 'New ball taken'); break; }
     case 'sc-image': scorecardImage(live); break;
     case 'print': printScorecard(live); break;
@@ -1815,6 +2022,13 @@ $('#tab-live').addEventListener('input', e => {
   if (!live && e.target.closest('#live-main')) setupSync(e.target);
   if (live && e.target.id === 'l2-lost') previewLost2();
 });
+$('#live-cards').addEventListener('toggle', e => {
+  const d = e.target;
+  if (!(d instanceof HTMLDetailsElement) || d.dataset.bbb == null || !live) return;
+  const k = Number(d.dataset.bbb);
+  if (d.open) { bbbOpen.add(k); if (!d.querySelector('.tbl-wrap') && live.inns[k]) d.insertAdjacentHTML('beforeend', bbbBody(live, live.inns[k])); }
+  else bbbOpen.delete(k);
+}, true);
 $('#tab-live').addEventListener('change', e => {
   if (!live && e.target.id === 'ls-type') setupSync(e.target);
   if (e.target.id === 'ww-on') { e.target.blur(); store.set('wwOn', e.target.checked); toast(e.target.checked ? 'You\'ll be asked where each scoring shot went' : 'Wagon wheel prompts off'); }
@@ -2025,10 +2239,11 @@ export function printScorecard(m) {
 // A saved or linked match's scorecard in a dialog, with image and print buttons.
 export function openScorecard(m, title) {
   const body = openModal(title, `<p style="margin:0 0 12px;font-weight:700">${esc(m.result || 'In progress')}</p>${daysHTML(m)}${m.inns.map((_, k) => scorecardHTML(m, k)).join('')}
-    <div class="modal-actions"><button type="button" class="btn ghost" data-x="img">Scorecard image</button><button type="button" class="btn ghost" data-x="print">Print or save as PDF</button></div>`, { wide: true });
+    <div class="modal-actions">${m.init && Array.isArray(m.log) ? '<button type="button" class="btn ghost" data-x="comm">Commentary</button>' : ''}<button type="button" class="btn ghost" data-x="img">Scorecard image</button><button type="button" class="btn ghost" data-x="print">Print or save as PDF</button></div>`, { wide: true });
   body.addEventListener('click', e => {
     const x = e.target.closest('[data-x]');
     if (!x) return;
-    if (x.dataset.x === 'img') scorecardImage(m); else printScorecard(m);
+    if (x.dataset.x === 'comm') openCommentary(m, title);
+    else if (x.dataset.x === 'img') scorecardImage(m); else printScorecard(m);
   });
 }
