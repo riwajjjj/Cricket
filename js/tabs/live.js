@@ -122,6 +122,7 @@ function runEntry(e) {
     case 'rain': return coreRain(e.lost, e.noMore);
     case 'session': return coreSession(e.stumps);
     case 'newball': return coreNewBall();
+    case 'dayovers': return coreDayOvers(e.overs);
     default: return 'an unknown action';
   }
 }
@@ -360,6 +361,7 @@ function commentAction(e, before) {
     case 'retire': { const r = i.batters.find(b => b.retired && before.crease.includes(b.name)); if (r) say('event', `${r.name} retires hurt, ${r.runs} (${r.balls})`); break; }
     case 'pen': say('event', `5 penalty runs to ${e.bat ? live.teams[i.bat] : live.teams[1 - i.bat]}`); break;
     case 'session': { const s = live.sessions?.[live.sessions.length - 1]; if (s) say('session', `${s.label}, day ${s.day}: ${s.text}`); break; }
+    case 'dayovers': say('event', `Overs for day ${clockOf().day} set to ${e.overs}${e.overs < 90 ? ' (time lost to rain or bad light)' : e.overs > 90 ? ' (extra time to make up lost overs)' : ''}`); break;
     case 'newball': say('event', `New ball taken after ${fmtOvers(i.balls - (before.newBallFrom || 0))} overs`); break;
     case 'rain': {
       const k = live.inns.length - 1, stop = live.rain?.stops[k]?.slice(-1)[0];
@@ -760,7 +762,23 @@ export const clockOf = (m = live) => m.clock || { day: 1, s: 0, start: [], daySt
 export const todayBalls = (m = live) => ballsOf(snapInns(m)) - ballsOf(clockOf(m).dayStart);
 // Balls left in the match: what's left of today plus the remaining days. Overs bowled beyond 90 in a day
 // (if Stumps is never pressed) come out of the days still to come.
-export const matchBallsLeft = (m = live) => Math.max(0, ((m.days || 5) - clockOf(m).day + 1) * DAY_BALLS - todayBalls(m));
+// Overs scheduled for a day: 90 unless changed (a late start for rain, or extra time to make up lost overs).
+export const dayBalls = (m = live, d = clockOf(m).day) => { const o = (m.dayOvers || {})[d]; return o != null ? o * 6 : DAY_BALLS; };
+export function matchBallsLeft(m = live) {
+  let t = 0;
+  for (let d = clockOf(m).day; d <= (m.days || 5); d++) t += dayBalls(m, d);
+  return Math.max(0, t - todayBalls(m));
+}
+// Change how many overs today has. Must not be fewer than have already been bowled today.
+function coreDayOvers(overs) {
+  if (!isTest()) return 'overs per day are only kept in Test matches';
+  if (live.status === 'done') return 'the match had already finished';
+  const o = Number(overs);
+  if (!Number.isInteger(o) || o < 0 || o > 120) return 'overs for the day must be a whole number from 0 to 120';
+  if (o * 6 < todayBalls()) return `${fmtOvers(todayBalls())} overs have already been bowled today`;
+  live.dayOvers = { ...(live.dayOvers || {}), [clockOf().day]: o };
+  return null;
+}
 const scoreTxt = (i, m = live) => (i.ended === 'all out' ? `${i.runs} all out` : `${i.runs}/${i.wkts}${i.ended === 'declared' && isTest(m) ? ' dec' : ''}`);
 function leadShort(m = live) {
   const i = m.inns[m.inns.length - 1];
@@ -887,7 +905,7 @@ function coreNewBall() {
 export function testCardHTML() {
   if (!isTest() || live.status === 'done') return '';
   const c = clockOf(), days = live.days || 5, i = cur(), n = live.inns.length;
-  const today = todayBalls(), leftToday = Math.max(0, DAY_BALLS - today);
+  const today = todayBalls(), sched = dayBalls(), leftToday = Math.max(0, sched - today);
   const lines = [];
   if (live.status === 'live') {
     const age = ballAge(i);
@@ -914,7 +932,7 @@ export function testCardHTML() {
   return `<div class="card test-card">
     <h2 class="card-title">Day ${c.day} of ${days} · ${SESS[c.s].toLowerCase()} session</h2>
     <ul class="g-facts">
-      <li><span>Overs today</span><b>${fmtOvers(today)} bowled · about ${fmtOvers(leftToday)} left</b></li>
+      <li><span>Overs today</span><b>${fmtOvers(today)} of ${fmtOvers(sched)} bowled${sched !== DAY_BALLS ? ' (changed)' : ''} · about ${fmtOvers(leftToday)} left <button type="button" class="btn ghost sm" data-act="dayovers" style="margin-left:8px">Rain / change overs</button></b></li>
       ${lines.join('')}
     </ul>
     ${decl}
@@ -1999,11 +2017,12 @@ export async function liveAction(action, el) {
     case 'retire': retireModal(); break;
     case 'penalty': penaltyModal(); break;
     case 'rain': rainModal(); break;
+    case 'dayovers': dayOversModal(); break;
     case 'session': {
       const stumps = el.dataset.v === '1', c = clockOf();
       const lastDay = (stumps || c.s === 2) && c.day >= (live.days || 5);
       if (lastDay && !(await confirmBox('Stumps on the last day?', 'The match ends as a draw. You can undo it.', 'Stumps: draw'))) break;
-      if (stumps && c.s < 2 && !lastDay && !(await confirmBox('End the day now?', `The rest of today's overs (about ${fmtOvers(Math.max(0, DAY_BALLS - todayBalls()))}) are lost. Use this for bad light or rain. You can undo it.`, 'Stumps now'))) break;
+      if (stumps && c.s < 2 && !lastDay && !(await confirmBox('End the day now?', `The rest of today's overs (about ${fmtOvers(Math.max(0, dayBalls() - todayBalls()))}) are lost. Use this for bad light or rain. You can undo it.`, 'Stumps now'))) break;
       const err = act({ t: 'session', stumps }, () => coreSession(stumps));
       if (err) toast(`Can't do that: ${err}.`); else toast(live.status === 'done' ? live.result : `${live.sessions[live.sessions.length - 1].label}: ${live.sessions[live.sessions.length - 1].text}`);
       break;
@@ -2183,6 +2202,30 @@ function rainModal() {
     closeModal();
     const err = applyRain(r.balls, r.noMore);
     toast(err ? `Can't apply that: ${err}.` : live.status === 'done' ? `Match over: ${live.result}` : 'Stoppage recorded. Target and overs updated.');
+  });
+}
+
+// Tests: set how many overs today has (a late start or stoppage for rain, or extra overs to catch up).
+function dayOversModal() {
+  if (!live || live.status === 'done' || !isTest()) return;
+  const day = clockOf().day, now = dayBalls() / 6, bowled = todayBalls();
+  const body = openModal(`Overs for day ${day}`, `
+    <p class="hint" style="margin:-6px 0 12px">A normal day has 90 overs. If rain or bad light delays the start or stops play, enter the overs the umpires have scheduled for today, such as 75. If they add overs to make up lost time, enter more than 90. ${fmtOvers(bowled)} overs have been bowled today.</p>
+    <div class="fields">${liveField('do-overs', 'Overs today', String(now), { im: 'numeric', max: 3 })}</div>
+    <p class="err-text" id="do-err"></p>
+    <p class="hint">This changes today only. The overs left in the match and the result chances update. If play is over for the day, press “Stumps now” instead. Undo reverses this.</p>
+    <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Apply</button></div>`);
+  body.addEventListener('click', e => {
+    const x = e.target.closest('[data-x]');
+    if (!x) return;
+    if (x.dataset.x === 'cancel') { closeModal(); return; }
+    const v = $('#do-overs', body).value.trim();
+    const o = Number(v);
+    if (!v || !Number.isInteger(o)) { $('#do-err', body).textContent = 'Enter a whole number of overs, such as 75.'; return; }
+    const err = act({ t: 'dayovers', overs: o }, () => coreDayOvers(o));
+    if (err) { $('#do-err', body).textContent = `Can't do that: ${err}.`; return; }
+    closeModal();
+    toast(`Day ${day}: ${o} overs`);
   });
 }
 
