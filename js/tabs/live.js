@@ -296,7 +296,7 @@ new MutationObserver(() => { if (modal.hidden && ballTarget) ballTarget = null; 
 let commSink = null;
 const say = (kind, text, o = '') => { if (commSink) commSink.push({ inn: live.inns.length - 1, o, kind, text }); };
 function commentBall({ i, ev, bw, st, cm, total, r, batRuns, stand, strikerBefore, nonBefore, noneLeft }) {
-  const where = ev.ww && batRuns > 0 && isFinite(ev.ww.x) && isFinite(ev.ww.y) ? ` to ${posName(ev.ww, lefty(st.name)).toLowerCase()}` : '';
+  const where = ev.ww && batRuns > 0 && isFinite(ev.ww.x) && isFinite(ev.ww.y) ? ` to ${shotPhrase(ev.ww, lefty(st.name))}` : '';
   const big = n => (n === 4 ? 'FOUR' : n === 6 ? 'SIX' : plural(n, 'run'));
   let kind = 'ball', text = '';
   switch (ev.type) {
@@ -1657,6 +1657,12 @@ function fieldPos(shot, left) {
   return { name, hint: `${dir}, ${side}, ${dist}` };
 }
 const posName = (shot, left) => fieldPos(shot, left).name;
+// Commentary wording for a shot: the position plus where it sits relative to the batter, e.g. "backward square leg, behind square on the leg side".
+function shotPhrase(shot, left) {
+  const f = fieldPos(shot, left), [dir, side] = f.hint.split(', ');
+  const d = dir === 'straight' ? 'straight' : dir === 'square' ? 'square of the wicket' : dir === 'fine, behind the batter' ? 'fine behind the batter' : dir;
+  return dir === 'straight' ? `${f.name.toLowerCase()}, straight down the ground` : `${f.name.toLowerCase()}, ${d} on the ${side}`;
+}
 const lefty = name => !!store.get('lefties', {})[nameKey(name)];
 const nameKey = s => String(s || '').trim().toLowerCase();
 function sectorOf(shot, left) {
