@@ -2,7 +2,7 @@
    Strategy: answer from the cache straight away, then refresh that file from the network in the
    background, so edits reach users on their next visit. Change VERSION when files are added or removed,
    and whenever JS modules change in ways that depend on each other (new exports or imports). */
-const VERSION = 'crease-v6';
+const VERSION = 'crease-v7';
 const ASSETS = [
   './',
   './index.html',
@@ -35,6 +35,7 @@ const ASSETS = [
   './js/router.js',
   './js/state.js',
   './js/stats.js',
+  './js/testsim.js',
   './js/ui.js',
   './js/utils.js',
   './vendor/chart.umd.js',

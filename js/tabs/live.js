@@ -4,6 +4,7 @@ import { tipBtn } from '../groups.js';
 import { DLS, fmtOvers, parseOvers, profileFor, winProb } from '../maths.js';
 import { RENDER, nav } from '../router.js';
 import { dlsMatch } from '../stats.js';
+import { testOdds } from '../testsim.js';
 import { fmt } from '../state.js';
 import { closeModal, confirmBox, gaugeMarkup, modal, openModal, setGauge, toast } from '../ui.js';
 import { $, $$, esc, fx, nf, plural, store, uid } from '../utils.js';
@@ -109,6 +110,8 @@ function runEntry(e) {
     case 'end': return coreEnd(e.reason);
     case 'start2': return coreStart2(e.s, e.ns, e.bw, e.bat, e.lost || 0);
     case 'rain': return coreRain(e.lost, e.noMore);
+    case 'session': return coreSession(e.stumps);
+    case 'newball': return coreNewBall();
     default: return 'an unknown action';
   }
 }
@@ -270,6 +273,53 @@ function coreBall(ev) {
 let ballTarget = null; // { mode: 'replace' | 'insert', li } while a past ball is being edited
 // If an edit's follow-up dialog is cancelled, forget the pending edit (checked after any synchronous submit).
 new MutationObserver(() => { if (modal.hidden && ballTarget) ballTarget = null; }).observe(modal, { attributes: true, attributeFilter: ['hidden'] });
+/* ---------- Milestones in play ----------
+   Chips under the scoreboard when a batter, bowler or partnership is close to a landmark,
+   and a toast when one is reached. */
+const BAT_MARKS = [50, 100, 150, 200, 250, 300, 350, 400];
+const PART_MARKS = [50, 100, 150, 200, 250, 300];
+const markName = n => ({ 50: 'fifty', 100: 'hundred', 200: 'double hundred', 300: 'triple hundred' })[n] || String(n);
+const cap1 = s => s[0].toUpperCase() + s.slice(1);
+function alertsHTML(i) {
+  if (!live || live.status !== 'live') return '';
+  const out = [];
+  [i.striker, i.non].forEach(k => {
+    const b = i.batters[k];
+    const nx = b && BAT_MARKS.find(x => x > b.runs);
+    if (nx && nx - b.runs <= 10) out.push(`${esc(b.name)} ${b.runs}*: ${nx - b.runs} from a ${markName(nx)}`);
+  });
+  [i.bowler, i.lastBowler].filter((k, j, a) => k >= 0 && a.indexOf(k) === j).forEach(k => {
+    const w = i.bowlers[k];
+    if (w && (w.wkts === 4 || w.wkts === 9)) out.push(`${esc(w.name)} ${w.wkts}/${w.runs}: one more for ${w.wkts === 4 ? 'a five-for' : 'all ten'}`);
+  });
+  const pn = PART_MARKS.find(x => x > i.part.runs);
+  if (pn && i.part.runs > 0 && pn - i.part.runs <= 10) out.push(`Partnership ${i.part.runs}: ${pn - i.part.runs} from a ${pn}-run stand`);
+  return out.length ? `<div class="ms-alerts" aria-live="polite">${out.map(t => `<span class="ms-alert">${t}</span>`).join('')}</div>` : '';
+}
+function msState() {
+  if (!live || live.status !== 'live') return null;
+  const i = cur();
+  return { n: live.inns.length, bats: i.batters.map(b => b.runs), wk: i.bowlers.map(b => b.wkts), part: i.part.runs, parts: Array.isArray(i.parts) ? i.parts.length : -1 };
+}
+function msAnnounce(was) {
+  if (!was) return;
+  const i = live.inns[was.n - 1];
+  if (!i) return;
+  const msgs = [];
+  i.batters.forEach((b, k) => {
+    const x = [...BAT_MARKS].reverse().find(m => (was.bats[k] ?? 0) < m && b.runs >= m);
+    if (x) msgs.push(`${cap1(markName(x))} for ${b.name}: ${b.runs}${b.out ? '' : '*'} (${b.balls})`);
+  });
+  i.bowlers.forEach((w, k) => {
+    const before = was.wk[k] ?? 0;
+    if (before < 10 && w.wkts >= 10) msgs.push(`All ten for ${w.name}: ${w.wkts}/${w.runs}`);
+    else if (before < 5 && w.wkts >= 5) msgs.push(`Five-for for ${w.name}: ${w.wkts}/${w.runs}`);
+  });
+  const sameStand = Array.isArray(i.parts) ? i.parts.length === was.parts : i.part.runs >= was.part;
+  const px = sameStand && [...PART_MARKS].reverse().find(m => was.part < m && i.part.runs >= m);
+  if (px) msgs.push(`${px}-run partnership`);
+  if (msgs.length) toast(msgs.join(' · '));
+}
 export function applyBall(ev) {
   if (ballTarget) {
     const t = ballTarget; ballTarget = null;
@@ -278,7 +328,9 @@ export function applyBall(ev) {
     return;
   }
   if (!live || live.status !== 'live' || cur().needBowler) return;
-  act({ t: 'ball', ev }, () => coreBall(ev), { animate: true });
+  const was = msState();
+  const err = act({ t: 'ball', ev }, () => coreBall(ev), { animate: true });
+  if (!err) msAnnounce(was);
 }
 // The match as it stood just before log entry li (used so edit dialogs show the right batters).
 function stateBefore(li) {
@@ -522,6 +574,182 @@ export function testNext(m = live) {
   return { bat: counts[0] === 1 ? 0 : 1, canFollowOn: false };
 }
 function testNeed(team4, m = live) { return teamTotal(1 - team4, m) - teamTotal(team4, m) + 1; }
+
+/* ---------- Test cricket: days and sessions ----------
+   The scorer ends each session (Lunch, Tea, Stumps). A day is 90 overs; stumps called early loses the
+   rest of that day, and stumps on the last day ends the match as a draw. Each finished session keeps the
+   innings totals at its end, so runs, wickets and overs per session can be worked out afterwards. */
+const DAY_BALLS = 90 * 6;
+export const SESS = ['Morning', 'Afternoon', 'Evening'], SESS_END = ['Lunch', 'Tea', 'Stumps'];
+const snapInns = (m = live) => m.inns.map(i => ({ bat: i.bat, runs: i.runs, wkts: i.wkts, balls: i.balls }));
+const ballsOf = s => s.reduce((a, x) => a + x.balls, 0);
+// The match clock. Matches started before sessions existed count everything so far as day 1, morning.
+export const clockOf = (m = live) => m.clock || { day: 1, s: 0, start: [], dayStart: [] };
+export const todayBalls = (m = live) => ballsOf(snapInns(m)) - ballsOf(clockOf(m).dayStart);
+// Balls left in the match: what's left of today plus the remaining days. Overs bowled beyond 90 in a day
+// (if Stumps is never pressed) come out of the days still to come.
+export const matchBallsLeft = (m = live) => Math.max(0, ((m.days || 5) - clockOf(m).day + 1) * DAY_BALLS - todayBalls(m));
+const scoreTxt = i => (i.ended === 'all out' ? `${i.runs} all out` : `${i.runs}/${i.wkts}${i.ended === 'declared' ? ' dec' : ''}`);
+function leadShort(m = live) {
+  const i = m.inns[m.inns.length - 1];
+  if (m.inns.length === 1) return '';
+  const d = teamTotal(i.bat, m) - teamTotal(1 - i.bat, m);
+  return d > 0 ? `lead by ${plural(d, 'run')}` : d < 0 ? `trail by ${plural(-d, 'run')}` : 'scores level';
+}
+function closeText(m = live) {
+  const i = m.inns[m.inns.length - 1], l = leadShort(m);
+  return `${m.teams[i.bat]} ${scoreTxt(i)}${l ? ` (${l})` : ''}`;
+}
+function coreSession(stumps) {
+  if (!isTest()) return 'sessions are only kept in Test matches';
+  if (live.status === 'done') return 'the match had already finished';
+  const c = { ...clockOf(live) };
+  const end = snapInns();
+  const endsDay = !!stumps || c.s === 2;
+  live.sessions = live.sessions || [];
+  live.sessions.push({ day: c.day, s: c.s, start: c.start, end, stumps: endsDay, label: endsDay ? 'Stumps' : SESS_END[c.s], text: closeText() });
+  if (endsDay) { c.day++; c.s = 0; c.dayStart = end; } else c.s++;
+  c.start = end;
+  live.clock = c;
+  if (endsDay && c.day > (live.days || 5)) coreEndAny('draw'); // stumps on the last day
+  return null;
+}
+// Runs, wickets and overs in one session, by team, and who had the better of it.
+// A wicket counts for about 25 runs; a margin under 20 is called shared.
+export function sessionStats(se, m) {
+  const by = [{ runs: 0, wkts: 0, batted: false }, { runs: 0, wkts: 0, batted: false }];
+  let balls = 0;
+  se.end.forEach((e, k) => {
+    const s = se.start[k] || { runs: 0, wkts: 0, balls: 0 };
+    by[e.bat].runs += e.runs - s.runs; by[e.bat].wkts += e.wkts - s.wkts; balls += e.balls - s.balls;
+    if (e.balls > s.balls || e.runs > s.runs) by[e.bat].batted = true;
+  });
+  const pts = [0, 1].map(t => by[t].runs + 25 * by[1 - t].wkts);
+  const d = pts[0] - pts[1];
+  return { by, balls, runs: by[0].runs + by[1].runs, wkts: by[0].wkts + by[1].wkts, verdict: !balls ? '' : Math.abs(d) < 20 ? 'Shared' : m.teams[d > 0 ? 0 : 1] };
+}
+// The day-by-day card: every finished session, plus the one in play.
+export function daysHTML(m) {
+  if (!isTest(m) || !(m.sessions?.length || m.clock)) return '';
+  const rows = [...(m.sessions || [])];
+  const c = clockOf(m);
+  if (m.status !== 'done') rows.push({ day: c.day, s: c.s, start: c.start, end: snapInns(m), now: true });
+  const body = rows.map(se => {
+    const st = sessionStats(se, m);
+    const who = [0, 1].filter(t => st.by[t].batted).map(t => `${esc(m.teams[t])} ${st.by[t].runs}${st.by[1 - t].wkts ? `, took ${plural(st.by[1 - t].wkts, 'wicket')}` : ''}`).join(' · ');
+    return `<tr${se.now ? ' class="hl"' : ''}><td class="dim">Day ${se.day}</td><td>${SESS[se.s]}${se.now ? ' <span class="badge live" style="font-size:.6rem">Now</span>' : ''}</td><td class="num">${st.runs}/${st.wkts}</td><td class="num">${fmtOvers(st.balls)}</td><td style="white-space:normal">${who || '<span class="dim">—</span>'}</td><td>${st.verdict ? (st.verdict === 'Shared' ? '<span class="dim">Shared</span>' : `<b>${esc(st.verdict)}</b>`) : ''}</td><td style="white-space:normal" class="dim">${se.now ? '' : `${esc(se.label)}: ${esc(se.text)}`}</td></tr>`;
+  }).join('');
+  return `<div class="card scorecard days-card">
+    <div class="sc-head"><h3>Day by day</h3><span class="hint" style="margin:0">${tipBtn('Who had the better of each session: runs scored plus about 25 runs for every wicket taken. Within 20 of each other, it is called shared.', 'session verdicts')}</span></div>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Day</th><th>Session</th><th class="num">Runs/wkts</th><th class="num">Overs</th><th>By team</th><th>Session to</th><th>At the break</th></tr></thead><tbody>${body}</tbody></table></div>
+  </div>`;
+}
+
+/* ---------- Test cricket: result chances, follow-on, declarations, new ball ---------- */
+const wlOf = (m, t) => (sqOf(m, t)?.length || m.pps || 11) - 1;
+// Win / draw / lose chances from the match as it stands (see testsim.js for how it plays the rest out).
+function chancesInput(m, declareNow) {
+  if (!isTest(m) || m.status === 'done') return null;
+  const inns = m.inns.map((i, k) => ({ bat: i.bat, runs: i.runs, wkts: i.wkts, balls: i.balls, done: !!i.ended || (m.status === 'break' && k === m.inns.length - 1) }));
+  if (declareNow) inns[inns.length - 1].done = false;
+  if (m.inns.length >= 4 && inns.every(x => x.done)) return null;
+  const next = inns.every(x => x.done) ? { bat: m === live ? nextBatTeam() : testNext(m).bat } : null;
+  return { inns, next, ballsLeft: matchBallsLeft(m), wl: [wlOf(m, 0), wlOf(m, 1)], fo: m.followOn || 200, declareNow, sims: 800 };
+}
+export function testChances(m = live, { declareNow = false } = {}) {
+  const input = chancesInput(m, declareNow);
+  if (!input) return null;
+  const key = JSON.stringify(input);
+  if (!oddsCache.has(key)) {
+    if (oddsCache.size > 20) oddsCache.delete(oddsCache.keys().next().value);
+    oddsCache.set(key, testOdds(input));
+  }
+  return oddsCache.get(key);
+}
+const oddsCache = new Map(); // the same match state is drawn several times (scorer, break screen, re-renders)
+// The bar if the chances for this state are already known; otherwise a placeholder that is filled in
+// just after the screen updates, so scoring a ball never waits for the simulation.
+let oddsTimer = 0;
+function oddsSlot(m, declareNow) {
+  const input = chancesInput(m, declareNow);
+  if (!input) return '';
+  const hit = oddsCache.get(JSON.stringify(input));
+  if (hit) return oddsBar(m, hit);
+  clearTimeout(oddsTimer);
+  oddsTimer = setTimeout(fillOdds, 30);
+  return `<div class="odds-pending" data-odds="${declareNow ? 'decl' : 'main'}">Working out the chances…</div>`;
+}
+function fillOdds() {
+  if (!live) return;
+  document.querySelectorAll('#live-main .odds-pending').forEach(el => {
+    const r = testChances(live, { declareNow: el.dataset.odds === 'decl' });
+    if (r) el.outerHTML = oddsBar(live, r); else el.remove();
+  });
+}
+const pct = v => `${Math.round(v * 100)}%`;
+function oddsBar(m, r) {
+  const seg = (t, v, cls) => `<span class="odds-seg ${cls}" style="flex-grow:${Math.max(v, 0.0001)}" title="${esc(t)} ${pct(v)}"></span>`;
+  return `<div class="odds-bar" role="img" aria-label="${esc(`${m.teams[0]} ${pct(r.win[0])}, draw ${pct(r.draw)}, ${m.teams[1]} ${pct(r.win[1])}`)}">${seg(m.teams[0], r.win[0], 'a')}${seg('Draw', r.draw, 'd')}${seg(m.teams[1], r.win[1], 'b')}</div>
+    <div class="odds-legend"><span><i class="a"></i>${esc(m.teams[0])} <b>${pct(r.win[0])}</b></span><span><i class="d"></i>Draw <b>${pct(r.draw)}</b></span><span><i class="b"></i>${esc(m.teams[1])} <b>${pct(r.win[1])}</b></span></div>`;
+}
+export function testOddsHTML(m = live) {
+  const slot = oddsSlot(m, false);
+  if (!slot) return '';
+  const rpo = (() => { const b = m.inns.reduce((a, i) => a + i.balls, 0), r = m.inns.reduce((a, i) => a + i.runs, 0); const k = b / (b + 1500); return (1 - k) * 3.2 + k * (b ? r / b * 6 : 3.2); })();
+  return `<div class="card odds-card">
+    <h2 class="card-title">Result chances ${tipBtn(`Plays the rest of the match out 800 times, an over at a time, at this match's scoring rate (about ${nf(rpo, 1)} an over) and wicket rate, with later innings losing wickets faster and simple rules for declarations, the follow-on and blocking out for a draw. It counts the overs left from the day and session, so ending sessions with Lunch, Tea and Stumps keeps it accurate. It ignores who the players are, so treat it as a guide.`, 'result chances')}</h2>
+    ${slot}
+    <p class="hint">About ${fmtOvers(matchBallsLeft(m))} overs left in the match.</p>
+  </div>`;
+}
+const NEW_BALL = 80 * 6;
+const ballAge = i => i.balls - (i.newBall || 0);
+function coreNewBall() {
+  if (!isTest() || live.status !== 'live') return 'the new ball can only be taken during a Test innings';
+  const i = cur();
+  if (ballAge(i) < NEW_BALL) return 'the new ball isn\'t due until the old one is 80 overs old';
+  i.newBall = i.balls;
+  return null;
+}
+// Day and session, overs today, new ball, and the follow-on or declaration situation.
+export function testCardHTML() {
+  if (!isTest() || live.status === 'done') return '';
+  const c = clockOf(), days = live.days || 5, i = cur(), n = live.inns.length;
+  const today = todayBalls(), leftToday = Math.max(0, DAY_BALLS - today);
+  const lines = [];
+  if (live.status === 'live') {
+    const age = ballAge(i);
+    lines.push(age >= NEW_BALL
+        ? `<li><span>New ball</span><b class="pos">Available · this one is ${fmtOvers(age)} overs old <button type="button" class="btn sm" data-act="newball" style="margin-left:8px">Take new ball</button></b></li>`
+        : `<li><span>Ball age</span><b>${fmtOvers(age)} overs · new ball due in ${fmtOvers(NEW_BALL - age)}</b></li>`);
+    const fo = live.followOn || 200, i1 = live.inns[0];
+    if (n === 2 && i1.runs >= fo) {
+      const need = i1.runs - fo + 1 - i.runs;
+      lines.push(need > 0 ? `<li><span>Follow-on</span><b class="neg">${esc(live.teams[i.bat])} need ${need} more to avoid it</b></li>` : '<li><span>Follow-on</span><b class="pos">Avoided</b></li>');
+    }
+    if (n === 4 && i.target != null) lines.push(`<li><span>Chase</span><b>${Math.max(0, i.target - i.runs)} to win · about ${fmtOvers(matchBallsLeft())} overs left</b></li>`);
+  }
+  let decl = '';
+  if (live.status === 'live' && n === 3) {
+    const lead = teamTotal(i.bat) - teamTotal(1 - i.bat);
+    if (lead > 0) {
+      decl = `<div class="decl"><p class="modal-sub" style="margin:0 0 4px">If ${esc(live.teams[i.bat])} declare now</p>
+        <p style="margin:0 0 8px">${esc(live.teams[1 - i.bat])} need <b>${lead + 1}</b> to win in about <b>${fmtOvers(matchBallsLeft())}</b> overs.</p>
+        ${oddsSlot(live, true)}</div>`;
+    }
+  }
+  const btn = (v, label, ghost) => `<button type="button" class="btn ${ghost ? 'ghost ' : ''}sm" data-act="session" data-v="${v}">${label}</button>`;
+  return `<div class="card test-card">
+    <h2 class="card-title">Day ${c.day} of ${days} · ${SESS[c.s].toLowerCase()} session</h2>
+    <ul class="g-facts">
+      <li><span>Overs today</span><b>${fmtOvers(today)} bowled · about ${fmtOvers(leftToday)} left</b></li>
+      ${lines.join('')}
+    </ul>
+    ${decl}
+    <div class="modal-actions" style="justify-content:flex-start;margin-top:12px">${c.s < 2 ? `${btn('', SESS_END[c.s])}${btn('1', 'Stumps now', true)}` : btn('1', c.day >= days ? 'Stumps: end of the match' : 'Stumps')}</div>
+    <p class="hint" style="margin-top:8px">${c.day >= days && c.s === 2 ? 'Stumps on the last day ends the match as a draw.' : c.s < 2 ? `Press ${SESS_END[c.s]} at the break. “Stumps now” ends the day early (bad light, rain), and the rest of today's overs are lost.` : 'Press Stumps at the close of play.'}</p>
+  </div>`;
+}
 export function endInnings(reason) {
   const i = cur();
   i.ended = reason;
@@ -647,7 +875,7 @@ export function setupHTML() {
       ${liveField('ls-tb', 'Bowling first', tB)}
       ${liveField('ls-ov', 'Overs per side', prefill?.overs ?? f.overs ?? '', { im: 'numeric', max: 3 })}
       ${selectField('ls-type', 'Match type', [{ v: 'limited', l: 'Limited overs' }, { v: 'test', l: 'Test: two innings each' }], f.key === 'Test' && !prefill ? 'test' : 'limited')}
-      ${selectField('ls-days', 'Match length (sets the follow-on)', [5, 4, 3, 2, 1].map(d => ({ v: String(d), l: `${d} day${d > 1 ? 's' : ''} · follow-on at ${FOLLOW_ON[d]}` })), '5')}
+      ${selectField('ls-days', 'Days left when play starts (sets the follow-on)', [5, 4, 3, 2, 1].map(d => ({ v: String(d), l: `${d} day${d > 1 ? 's' : ''} · follow-on at ${FOLLOW_ON[d]}` })), '5')}
     </div>
     <div class="modal-actions" style="justify-content:flex-start;margin-top:10px"><button type="button" class="btn ghost sm" data-act="swap-teams">Swap batting order</button></div>
     <div class="grid-2 squads">
@@ -665,7 +893,7 @@ export function setupHTML() {
       ${liveField('ls-pps', 'Players per side', '11', { im: 'numeric', max: 2 })}
     </div>
     <datalist id="ls-sqa-list"></datalist><datalist id="ls-sqb-list"></datalist>
-    <p class="hint">Leave overs empty for an unlimited innings (it ends when the side is all out or you end it). Bowlers are limited to a fifth of the overs.</p>
+    <p class="hint">Leave overs empty for an unlimited innings (it ends when the side is all out or you end it). Bowlers are limited to a fifth of the overs. In a Test, if the first day is washed out, pick the days remaining: the follow-on follows them (Law 14.3).</p>
     <p class="err-text" id="ls-err"></p>
     <div class="modal-actions" style="justify-content:flex-start"><button type="button" class="btn" data-act="start">Start match</button></div>
   </div>`;
@@ -745,7 +973,7 @@ export function startMatch() {
   if (squads[1].length) saved[tb.toLowerCase()] = markRoles(squads[1], full[1].keeper, full[1].captain);
   store.set('squads', saved);
   live = { id: uid(), created: Date.now(), teams: [ta, tb], overs: ov, pps, squads: squads.map(q => q.length ? q : null), keepers: full.map(f => f.names.length ? f.keeper : null), captains: full.map(f => f.names.length ? f.captain : null), format: test ? 'Test' : fmt().label, status: 'live', inns: [newInnings(0, s, ns, bw, null)], result: null };
-  if (test) { live.matchType = 'test'; live.days = Number(g('ls-days')) || 5; live.followOn = FOLLOW_ON[live.days] || 200; }
+  if (test) { live.matchType = 'test'; live.days = Number(g('ls-days')) || 5; live.followOn = FOLLOW_ON[live.days] || 200; live.clock = { day: 1, s: 0, start: [], dayStart: [] }; live.sessions = []; }
   if (prefill?.link) live.tournament = prefill.link;
   prefill = null;
   live.init = JSON.stringify(live); // the starting point the action log replays from
@@ -782,7 +1010,7 @@ export function boardHTML() {
   else if (live.overs && crr != null) eq = `Projected <em>${Math.round(i.runs + crr * (ballsLeft / 6))}</em>`;
   return `<div class="board${live.status === 'live' && chasing ? ' pulse' : ''}">
     <div class="board-main">
-      <div class="team-line">${esc(team)}${isTest() ? `<span class="dim" style="font-size:.85em">${ORD[live.inns.length - 1]} innings${live.followedOn && live.inns.length === 3 ? ', following on' : ''}</span>` : ''}${live.status === 'live' ? '<span class="badge live">Live</span>' : ''}${i.freeHit && live.status === 'live' ? '<span class="badge fh">Free hit</span>' : ''}</div>
+      <div class="team-line">${esc(team)}${isTest() ? `<span class="dim" style="font-size:.85em">${ORD[live.inns.length - 1]} innings${live.followedOn && live.inns.length === 3 ? ', following on' : ''}${live.status !== 'done' ? ` · Day ${clockOf().day}, ${SESS[clockOf().s].toLowerCase()}` : ''}</span>` : ''}${live.status === 'live' ? '<span class="badge live">Live</span>' : ''}${i.freeHit && live.status === 'live' ? '<span class="badge fh">Free hit</span>' : ''}</div>
       <div class="score-big">${i.runs}/${i.wkts}<small>(${fmtOvers(i.balls)}${cap != null ? `/${fmtOvers(cap)}` : ''} ov)</small></div>
       ${eq ? `<div class="board-eq" style="font-size:clamp(1.15rem,.9rem + 1.2vw,1.6rem);margin-top:8px">${eq}</div>` : ''}
     </div>
@@ -816,8 +1044,8 @@ export function liveHTML(animateLast) {
   const lockPad = i.needBowler;
   const overNo = Math.floor(i.balls / 6) + (i.needBowler ? 1 : 1);
   const strip = !i.needBowler && over.balls.length
-    ? over.balls.map((b, k) => chip(b, animateLast && k === over.balls.length - 1)).join('')
-    : `<span class="empty-over">${i.needBowler ? 'Over complete' : 'New over'}</span>`;
+      ? over.balls.map((b, k) => chip(b, animateLast && k === over.balls.length - 1)).join('')
+      : `<span class="empty-over">${i.needBowler ? 'Over complete' : 'New over'}</span>`;
   const prevBowler = i.lastBowler >= 0 ? i.bowlers[i.lastBowler] : null;
   const bowlerOpts = i.bowlers.filter((b, k) => k !== i.lastBowler).map(b => `<option value="${esc(b.name)}"></option>`).join('');
   const prompt = i.needBowler ? `<div class="card prompt-card">
@@ -835,6 +1063,7 @@ export function liveHTML(animateLast) {
   const batRow = (idx, mark) => { const b = i.batters[idx]; return `<tr class="bat-row"><td class="${mark ? 'on-strike' : ''}">${esc(b.name + roleTag(live, i.bat, b.name))}${mark ? ' *' : ''}</td><td class="num"><b>${b.runs}</b></td><td class="num">${b.balls}</td><td class="num">${b.f4}</td><td class="num">${b.f6}</td><td class="num">${sr(b)}</td></tr>`; };
   const lastOvers = i.overs.filter(o => o.balls.length).slice(-5).reverse();
   return `${boardHTML()}
+  ${alertsHTML(i)}
   <div class="live-grid">
     <div class="live-col">
       ${prompt}
@@ -869,6 +1098,7 @@ export function liveHTML(animateLast) {
       </div>
     </div>
     <div class="live-col">
+      ${testCardHTML()}
       <div class="card">
         <h2 class="card-title">At the crease</h2>
         <div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Batter</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th></tr></thead>
@@ -883,7 +1113,8 @@ export function liveHTML(animateLast) {
       ${lastOvers.length ? `<div class="card"><h2 class="card-title">Recent overs</h2><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><tbody>${lastOvers.map(o => { const n = i.overs.indexOf(o) + 1; return `<tr><td class="dim">Ov ${n}</td><td>${esc(i.bowlers[o.bowler].name)}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true)).join('')}</span></td><td class="num"><b>${o.runs}</b>${o.wkts ? ` <span class="neg">${o.wkts}w</span>` : ''}</td></tr>`; }).join('')}</tbody></table></div></div>` : ''}
     </div>
   </div>
-  ${situationHTML(liveSituation())}`;
+  ${situationHTML(liveSituation())}
+  ${testOddsHTML()}`;
 }
 
 /* Match situation inside the live scorer: projections, win probability, par check. */
@@ -991,8 +1222,8 @@ export function breakHTML() {
   const batTeam = test ? nextBatTeam() : 1 - live.inns[0].bat;
   const t2 = live.teams[batTeam];
   const title = test
-    ? `${ORD[n]} innings: ${t2} to bat${n === 3 ? `, needing ${testNeed(batTeam)} to win` : ''}`
-    : chaseTitle(t2, plannedChase());
+      ? `${ORD[n]} innings: ${t2} to bat${n === 3 ? `, needing ${testNeed(batTeam)} to win` : ''}`
+      : chaseTitle(t2, plannedChase());
   const fo = test && nx.canFollowOn ? `<div class="modal-block"><p class="modal-sub">${esc(live.teams[live.inns[0].bat])} lead by ${plural(nx.lead, 'run')}, so they can enforce the follow-on</p>
     <div class="seg"><button type="button" data-act="fo" data-v="0" aria-pressed="${!followOn}">${esc(live.teams[live.inns[0].bat])} bat again</button><button type="button" data-act="fo" data-v="1" aria-pressed="${followOn}">Enforce the follow-on: ${esc(live.teams[live.inns[1].bat])} bat again</button></div></div>` : '';
   const bsq = sqOf(live, batTeam), fsq = sqOf(live, 1 - batTeam);
@@ -1003,7 +1234,7 @@ export function breakHTML() {
     ${fo}
     <div class="setup-grid">
       ${(bsq ? selectField('l2-s', 'Striker', opts(bsq, batTeam), bsq[0]) + selectField('l2-ns', 'Non-striker', opts(bsq, batTeam), bsq[1]) : liveField('l2-s', 'Striker', 'Batter 1') + liveField('l2-ns', 'Non-striker', 'Batter 2'))
-        + (fsq ? selectField('l2-bw', 'Opening bowler', opts(fsq, 1 - batTeam), fsq[fsq.length - 1]) : liveField('l2-bw', 'Opening bowler', ''))}
+  + (fsq ? selectField('l2-bw', 'Opening bowler', opts(fsq, 1 - batTeam), fsq[fsq.length - 1]) : liveField('l2-bw', 'Opening bowler', ''))}
       ${!test && live.overs ? liveField('l2-lost', 'Overs lost before the chase', '0', { im: 'decimal', max: 5 }) : ''}
     </div>
     ${!test && live.overs ? '<p class="hint" id="l2-dls">If rain takes overs off the chase before it starts, enter them and the target is revised.</p>' : ''}
@@ -1013,7 +1244,8 @@ export function breakHTML() {
       ${test ? '<button type="button" class="btn ghost" data-act="draw">End as a draw</button>' : '<button type="button" class="btn ghost" data-act="abandon">No result</button>'}
       <button type="button" class="btn ghost" data-act="undo"${undoStack.length ? '' : ' disabled'}>Undo last ball</button>
     </div>
-  </div>`;
+  </div>
+  ${test ? `<div class="grid-2">${testCardHTML()}${testOddsHTML()}</div>` : ''}`;
 }
 const chaseTitle = (t2, pc) => `Second innings: ${t2} need ${pc.target}${pc.dls ? ` off ${fmtOvers(pc.balls)} overs (DLS)` : ''}`;
 // Overs lost before the chase: the box accepts cricket notation; empty or 0 means none.
@@ -1130,11 +1362,11 @@ export function scorecardHTML(m, idx) {
     ${i.fow.length ? `<p class="sc-meta">Fall of wickets: ${i.fow.map(w => `${w.score}-${w.wkt} (${esc(w.name)}, ${w.over} ov)`).join(', ')}</p>` : ''}
     ${partsHTML(m, i)}
     ${(() => {
-      const ov = i.overs.filter(o => o.balls.length);
-      if (!ov.length) return '';
-      const edit = m === live && canEdit();
-      return `<details class="bbb"><summary>Ball by ball${edit ? ' · tap a ball to fix it' : ''}</summary><div class="tbl-wrap"><table class="tbl"><tbody>${ov.map(o => `<tr><td class="dim">Ov ${i.overs.indexOf(o) + 1}</td><td>${esc(i.bowlers[o.bowler]?.name || '')}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true, m)).join('')}</span></td><td class="num"><b>${o.runs}</b></td></tr>`).join('')}</tbody></table></div></details>`;
-    })()}
+    const ov = i.overs.filter(o => o.balls.length);
+    if (!ov.length) return '';
+    const edit = m === live && canEdit();
+    return `<details class="bbb"><summary>Ball by ball${edit ? ' · tap a ball to fix it' : ''}</summary><div class="tbl-wrap"><table class="tbl"><tbody>${ov.map(o => `<tr><td class="dim">Ov ${i.overs.indexOf(o) + 1}</td><td>${esc(i.bowlers[o.bowler]?.name || '')}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true, m)).join('')}</span></td><td class="num"><b>${o.runs}</b></td></tr>`).join('')}</tbody></table></div></details>`;
+  })()}
     ${bowls ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th><th class="num">Dots</th><th class="num">Wd/Nb</th></tr></thead><tbody>${bowls}</tbody></table></div>` : ''}
   </div>`;
 }
@@ -1155,12 +1387,12 @@ export function liveCharts(m) {
   chart('c-live-manhattan', {
     type: 'bar',
     data: { labels, datasets: m.inns.map((i, k) => ({
-      label: innLabel(i, k),
-      data: labels.map((_, j) => perInn[k][j] ? perInn[k][j].runs : null),
-      backgroundColor: cols[k].startsWith('#') ? alpha(cols[k], 0.8) : cols[k],
-      borderColor: labels.map((_, j) => perInn[k][j] && perInn[k][j].wkts ? p.ball : 'rgba(0,0,0,0)'),
-      borderWidth: 2, borderRadius: 4, maxBarThickness: 26,
-    })) },
+        label: innLabel(i, k),
+        data: labels.map((_, j) => perInn[k][j] ? perInn[k][j].runs : null),
+        backgroundColor: cols[k].startsWith('#') ? alpha(cols[k], 0.8) : cols[k],
+        borderColor: labels.map((_, j) => perInn[k][j] && perInn[k][j].wkts ? p.ball : 'rgba(0,0,0,0)'),
+        borderWidth: 2, borderRadius: 4, maxBarThickness: 26,
+      })) },
     options: baseOpts({ scales: axes({ x: 'Over', y: 'Runs' }), plugins: { tooltip: { callbacks: { afterLabel: c => { const o = perInn[c.datasetIndex][c.dataIndex]; return o && o.wkts ? `${plural(o.wkts, 'wicket')}` : ''; } } } } }),
   });
   const wl = Array.from({ length: maxO + 1 }, (_, k) => String(k));
@@ -1185,9 +1417,9 @@ export function liveCharts(m) {
     chart('c-live-wp', {
       type: 'line',
       data: { labels: wp.map(x => x.l), datasets: [
-        { label: `${t2} win chance`, data: wp.map(x => x.p), borderColor: p.fg2, borderWidth: 2.5, pointRadius: 3, pointBackgroundColor: p.fg2, tension: 0.25, fill: { target: { value: 50 }, above: alpha(p.sky, 0.28), below: alpha(p.accent, 0.28) } },
-        { label: 'Even', data: wp.map(() => 50), borderColor: p.line2, borderDash: [4, 4], borderWidth: 1, pointRadius: 0, fill: false },
-      ] },
+          { label: `${t2} win chance`, data: wp.map(x => x.p), borderColor: p.fg2, borderWidth: 2.5, pointRadius: 3, pointBackgroundColor: p.fg2, tension: 0.25, fill: { target: { value: 50 }, above: alpha(p.sky, 0.28), below: alpha(p.accent, 0.28) } },
+          { label: 'Even', data: wp.map(() => 50), borderColor: p.line2, borderDash: [4, 4], borderWidth: 1, pointRadius: 0, fill: false },
+        ] },
       options: baseOpts({ interaction: { mode: 'index', intersect: false }, scales: ax, plugins: { legend: { display: false }, tooltip: { filter: c => c.datasetIndex === 0, callbacks: { title: it => `After ${it[0].label} overs`, label: c => ` ${t2} ${c.parsed.y}%  ·  ${t1} ${Math.round((100 - c.parsed.y) * 10) / 10}%` } } } }),
     });
   }
@@ -1205,7 +1437,7 @@ export function renderLiveAll(animateLast = false) {
   }
   main.innerHTML = live.status === 'live' ? liveHTML(animateLast) : live.status === 'break' ? breakHTML() : doneHTML();
   actions.innerHTML = `${live.status !== 'done' ? `<button type="button" class="btn ghost" data-act="save-match">Save progress</button>` : ''}<button type="button" class="btn ghost danger" data-act="new">New match</button>`;
-  cards.innerHTML = live.inns.map((_, k) => scorecardHTML(live, k)).join('');
+  cards.innerHTML = daysHTML(live) + live.inns.map((_, k) => scorecardHTML(live, k)).join('');
   paintSituation();
   liveCharts(live);
   if (live.status === 'live' && cur().needBowler) setTimeout(() => $('#live-bowler')?.focus({ preventScroll: true }), 30);
@@ -1303,7 +1535,7 @@ function wagonCard(m) {
 /* ---------- Match-ups ---------- */
 function matchupsCard(i) {
   const rows = Object.entries(i.mu || {}).map(([k, v]) => { const [bi, ti] = k.split('|').map(Number); return { ...v, bowler: i.bowlers[bi]?.name || '?', batter: i.batters[ti]?.name || '?' }; })
-    .filter(r => r.balls || r.outs).sort((a, b) => b.balls - a.balls).slice(0, 8);
+      .filter(r => r.balls || r.outs).sort((a, b) => b.balls - a.balls).slice(0, 8);
   if (!rows.length) return '';
   return `<div class="card"><h2 class="card-title">Match-ups</h2><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Batter</th><th>Bowler</th><th class="num">R</th><th class="num">B</th><th class="num">SR</th><th class="num">Dots</th><th class="num">Out</th></tr></thead><tbody>
     ${rows.map(r => `<tr><td>${esc(r.batter)}</td><td>${esc(r.bowler)}</td><td class="num"><b>${r.runs}</b></td><td class="num">${r.balls}</td><td class="num">${r.balls ? nf(r.runs / r.balls * 100, 1) : '—'}</td><td class="num">${r.dots}</td><td class="num">${r.outs ? `<span class="neg">${r.outs}</span>` : '—'}</td></tr>`).join('')}
@@ -1520,6 +1752,16 @@ export async function liveAction(action, el) {
     case 'retire': retireModal(); break;
     case 'penalty': penaltyModal(); break;
     case 'rain': rainModal(); break;
+    case 'session': {
+      const stumps = el.dataset.v === '1', c = clockOf();
+      const lastDay = (stumps || c.s === 2) && c.day >= (live.days || 5);
+      if (lastDay && !(await confirmBox('Stumps on the last day?', 'The match ends as a draw. You can undo it.', 'Stumps: draw'))) break;
+      if (stumps && c.s < 2 && !lastDay && !(await confirmBox('End the day now?', `The rest of today's overs (about ${fmtOvers(Math.max(0, DAY_BALLS - todayBalls()))}) are lost. Use this for bad light or rain. You can undo it.`, 'Stumps now'))) break;
+      const err = act({ t: 'session', stumps }, () => coreSession(stumps));
+      if (err) toast(`Can't do that: ${err}.`); else toast(live.status === 'done' ? live.result : `${live.sessions[live.sessions.length - 1].label}: ${live.sessions[live.sessions.length - 1].text}`);
+      break;
+    }
+    case 'newball': { const err = act({ t: 'newball' }, coreNewBall); toast(err ? `Can't do that: ${err}.` : 'New ball taken'); break; }
     case 'sc-image': scorecardImage(live); break;
     case 'print': printScorecard(live); break;
     case 'rename': renameModal(); break;
@@ -1770,7 +2012,7 @@ export function printScorecard(m) {
   let host = document.getElementById('print-area');
   if (!host) { host = document.createElement('div'); host.id = 'print-area'; document.body.appendChild(host); }
   const title = `${m.teams[0]} v ${m.teams[1]}`;
-  host.innerHTML = `<h1>${esc(title)}</h1><p class="pa-result">${esc(m.result || 'In progress')}</p><p class="pa-meta">${esc(m.format || '')} · ${new Date(m.created || Date.now()).toLocaleDateString()}</p>${m.inns.map((_, k) => scorecardHTML(m, k)).join('')}`;
+  host.innerHTML = `<h1>${esc(title)}</h1><p class="pa-result">${esc(m.result || 'In progress')}</p><p class="pa-meta">${esc(m.format || '')} · ${new Date(m.created || Date.now()).toLocaleDateString()}</p>${daysHTML(m)}${m.inns.map((_, k) => scorecardHTML(m, k)).join('')}`;
   host.querySelectorAll('details.parts').forEach(d => { d.open = true; });
   host.querySelectorAll('button').forEach(b => { b.replaceWith(Object.assign(document.createElement('span'), { className: b.className, textContent: b.textContent })); });
   document.body.classList.add('printing');
@@ -1782,7 +2024,7 @@ export function printScorecard(m) {
 
 // A saved or linked match's scorecard in a dialog, with image and print buttons.
 export function openScorecard(m, title) {
-  const body = openModal(title, `<p style="margin:0 0 12px;font-weight:700">${esc(m.result || 'In progress')}</p>${m.inns.map((_, k) => scorecardHTML(m, k)).join('')}
+  const body = openModal(title, `<p style="margin:0 0 12px;font-weight:700">${esc(m.result || 'In progress')}</p>${daysHTML(m)}${m.inns.map((_, k) => scorecardHTML(m, k)).join('')}
     <div class="modal-actions"><button type="button" class="btn ghost" data-x="img">Scorecard image</button><button type="button" class="btn ghost" data-x="print">Print or save as PDF</button></div>`, { wide: true });
   body.addEventListener('click', e => {
     const x = e.target.closest('[data-x]');

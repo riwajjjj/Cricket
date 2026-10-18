@@ -205,8 +205,8 @@
   border-radius: var(--r);
   padding: 18px 20px;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
-    #07100d;
+          linear-gradient(180deg, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
+          #07100d;
   border: 1px solid #23392f;
   color: #eaf3ee;
   overflow: hidden;
@@ -656,3 +656,27 @@ details.bbb summary:hover { color: var(--fg); }
 .tbl td.q-team { white-space: normal; min-width: 160px; width: 100%; }
 .q-need { margin-top: 2px; font-size: 0.82rem; line-height: 1.4; color: var(--fg-2); max-width: 70ch; }
 .q-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* ---------- Test matches: result chances, day card, milestone chips ---------- */
+.odds-bar { display: flex; height: 14px; border-radius: 999px; overflow: hidden; background: var(--raise); gap: 2px; }
+.odds-seg { display: block; min-width: 0; }
+.odds-seg.a, .odds-legend i.a { background: var(--accent); }
+.odds-seg.d, .odds-legend i.d { background: var(--line-2); }
+.odds-seg.b, .odds-legend i.b { background: var(--sky); }
+.odds-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 0.88rem; color: var(--fg-2); }
+.odds-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.odds-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.odds-legend b { color: var(--fg); font-variant-numeric: tabular-nums; }
+.test-card .g-facts, .odds-card .g-facts { margin-top: 0; }
+.decl { margin-top: 12px; padding: 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); font-size: 0.9rem; }
+.ms-alerts { display: flex; flex-wrap: wrap; gap: 8px; margin: -6px 0 2px; }
+.ms-alert { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; font-size: 0.85rem; font-weight: 600; color: var(--accent-text); background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.ms-alert::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: blink 1.4s steps(2) infinite; }
+.days-card + .scorecard { margin-top: 18px; }
+@media (prefers-reduced-motion: reduce) { .ms-alert::before { animation: none; } }
+.g-facts b.pos { color: var(--turf); }
+.g-facts b.neg { color: var(--ball); }
+.odds-pending { min-height: 44px; display: flex; align-items: center; font-size: 0.85rem; color: var(--muted); }
+.test-card .g-facts li { flex-wrap: wrap; align-items: baseline; }
+.test-card .g-facts li span { white-space: nowrap; }
+.test-card .g-facts li b { margin-left: auto; }
