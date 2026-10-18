@@ -2,7 +2,7 @@
    Strategy: answer from the cache straight away, then refresh that file from the network in the
    background, so edits reach users on their next visit. Change VERSION when files are added or removed,
    and whenever JS modules change in ways that depend on each other (new exports or imports). */
-const VERSION = 'crease-v11';
+const VERSION = 'crease-v12';
 const ASSETS = [
   './',
   './index.html',
@@ -52,7 +52,8 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // cache: 'reload' skips the browser's own HTTP cache, so a new version never stores stale copies of old files.
+  e.waitUntil(caches.open(VERSION).then(c => c.addAll(ASSETS.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
@@ -71,7 +72,7 @@ self.addEventListener('fetch', e => {
     const cache = await caches.open(VERSION);
     const key = req.mode === 'navigate' ? './index.html' : req;
     const cached = await cache.match(key, { ignoreSearch: true });
-    const fresh = fetch(req)
+    const fresh = fetch(req, { cache: 'no-cache' }) // always check with the server, not the HTTP cache
         .then(res => { if (res && res.ok && res.type === 'basic') cache.put(key, res.clone()); return res; })
         .catch(() => null);
     if (cached) { e.waitUntil(fresh); return cached; }
