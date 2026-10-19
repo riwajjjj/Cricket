@@ -856,17 +856,17 @@ RENDER.tournament = function renderTournament() {
       ${board('Orange Cap · most runs', bats, r => r.runs, r => `${r.balls ? nf(r.runs / r.balls * 100, 1) : '—'} SR`)}
       ${board('Purple Cap · most wickets', bowls, r => r.bw, r => `${rr(r.br, r.bb)} econ`)}
     </div>
-    ${lead.length ? `<div class="grid-2">
+    ${lead.length ? `<div class="grid-2" style="align-items:start">
       ${board('Player of the tournament', mvp, r => nf(r.mvp, 0), r => (r.pom ? plural(r.pom, 'PoM award') : '0 PoM awards'), 'Points from every match: runs (more for quick scoring), wickets (more for tight bowling) and catches.')}
+      ${board('Best fielders', fielders, r => r.fd, r => plural(r.m, 'match', 'matches'), 'Catches, stumpings and run outs.')}
       ${board('Most sixes', six, r => r.f6, r => `${r.runs} runs`)}
+      ${board('Most fours', fours, r => r.f4, r => `${r.runs} runs`)}
       ${board('Highest scores', hs, x => `${x.r}${x.out ? '' : '*'}`, x => `${x.b} balls v ${esc(x.opp)}`)}
-      ${board('Best bowling', bestB, x => figs(x), x => `${fmtOvers(x.balls)} ov v ${esc(x.opp)}`)}
       ${board('Fastest fifty', fast, x => `${x.to50} balls`, x => `${x.r}${x.out ? '' : '*'} v ${esc(x.opp)}`, 'Balls to 50, estimated from the innings strike rate.')}
       ${board('Best strike rate', srs, r => nf(r.runs / r.balls * 100, 1), r => `${r.runs} off ${r.balls}`, `At least ${minB} balls faced (this grows as the tournament goes on).`)}
-      ${board('Best economy', eco, r => rr(r.br, r.bb), r => `${fmtOvers(r.bb)} ov · ${plural(r.bw, 'wkt')}`, `At least ${fmtOvers(minBB)} overs bowled (this grows as the tournament goes on).`)}
       ${board('Best batting average', avgs, r => nf(r.runs / (r.inns - r.no), 2), r => `${r.runs} runs · ${plural(r.inns, 'inns', 'inns')}`, `At least ${plural(minInns, 'innings', 'innings')}, and out at least once.`)}
-      ${board('Most fours', fours, r => r.f4, r => `${r.runs} runs`)}
-      ${board('Best fielders', fielders, r => r.fd, r => plural(r.m, 'match', 'matches'), 'Catches, stumpings and run outs.')}
+      ${board('Best bowling', bestB, x => figs(x), x => `${fmtOvers(x.balls)} ov v ${esc(x.opp)}`)}
+      ${board('Best economy', eco, r => rr(r.br, r.bb), r => `${fmtOvers(r.bb)} ov · ${plural(r.bw, 'wkt')}`, `At least ${fmtOvers(minBB)} overs bowled (this grows as the tournament goes on).`)}
     </div>` : ''}
     ${phaseCard(t, S)}
     ${anySim ? '<p class="hint">Simulated players\' figures count here only. They are not added to the Players tab or your records.</p>' : ''}`;
