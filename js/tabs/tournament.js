@@ -229,6 +229,7 @@ function leaders(t, linked) {
 }
 // Orders the matches still to play so each team gets the longest possible gap between games.
 function spreadSchedule(t) {
+  if (t.fixtures.some(f => f.date)) return; // a dated schedule keeps its order
   const league = t.fixtures.filter(f => !f.stage), ko = t.fixtures.filter(f => f.stage);
   const done = league.filter(f => isPlayed(f) || busy(t, f)), todo = league.filter(f => !isPlayed(f) && !busy(t, f));
   const last = new Map();
@@ -273,6 +274,7 @@ function squadsForm(t) {
 const busy = (t, f) => live && live.tournament && live.tournament.tid === t.id && live.tournament.fid === f.id && live.status !== 'done';
 
 /* ---------- Render ---------- */
+const dateTxt = d => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || ''); return m ? `${Number(m[3])} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(m[2]) - 1]}` : ''; };
 function fxRow(t, f, label, byId, caption = '') {
   const known = !!(f.a && f.b);
   const o = known ? outcome(t, f, byId) : null;
@@ -295,7 +297,7 @@ function fxRow(t, f, label, byId, caption = '') {
       ${pending ? '' : `<button type="button" class="btn ghost sm" data-tr="sim" data-f="${f.id}">Simulate</button>`}`;
   }
   const del = f.stage ? '' : `<button type="button" class="row-del" data-tr="remove" data-f="${f.id}" aria-label="Remove fixture"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
-  return `<div class="fx-row"><div class="fx-main"><span class="fx-no${label.length > 2 ? ' wide' : ''}">${esc(label)}</span><div>${caption || t.grounds?.[f.a] ? `<div class="fx-cap">${esc([caption, t.grounds?.[f.a] && `at ${t.grounds[f.a]}`].filter(Boolean).join(' · '))}</div>` : ''}<div class="fx-teams">${esc(f.a || 'TBC')} <span class="dim">v</span> ${esc(f.b || 'TBC')}</div><div class="fx-status">${status}</div></div></div>
+  return `<div class="fx-row"><div class="fx-main"><span class="fx-no${label.length > 2 ? ' wide' : ''}">${esc(label)}</span><div>${(() => { const c = [caption, dateTxt(f.date), (f.venue || t.grounds?.[f.a]) && `at ${f.venue || t.grounds[f.a]}`].filter(Boolean).join(' · '); return c ? `<div class="fx-cap">${esc(c)}</div>` : ''; })()}<div class="fx-teams">${esc(f.a || 'TBC')} <span class="dim">v</span> ${esc(f.b || 'TBC')}</div><div class="fx-status">${status}</div></div></div>
     <div class="fx-acts">${actions}${del}</div></div>`;
 }
 
@@ -400,7 +402,7 @@ RENDER.tournament = function renderTournament() {
     ${ko.length ? koCard(t, ko, byId) : ''}
     <div class="card">
       <div class="sc-head" style="margin-bottom:12px"><h2 class="card-title" style="margin:0">${ko.length ? 'League fixtures' : 'Fixtures and results'}</h2>
-        <div class="head-actions" style="width:auto"><button type="button" class="btn ghost sm" data-tr="squads">Squads</button><button type="button" class="btn ghost sm" data-tr="rr">Add round-robin fixtures</button><button type="button" class="btn ghost sm" data-tr="addfx">Add a fixture</button>${leagueLeft ? `<button type="button" class="btn ghost sm" data-tr="sim-all">Simulate ${leagueLeft === league.length ? 'the league' : `the other ${leagueLeft}`}</button>` : ''}${anySim ? '<button type="button" class="btn ghost sm danger" data-tr="sim-clear">Clear simulated results</button>' : ''}${ko.length || t.teams.length < 2 ? '' : '<button type="button" class="btn ghost sm" data-tr="ko">Set up knockouts</button>'}</div></div>
+        <div class="head-actions" style="width:auto"><button type="button" class="btn ghost sm" data-tr="squads">Squads</button><button type="button" class="btn ghost sm" data-tr="rr">Add round-robin fixtures</button><button type="button" class="btn ghost sm" data-tr="import">Add fixtures from a list</button><button type="button" class="btn ghost sm" data-tr="addfx">Add a fixture</button>${leagueLeft ? `<button type="button" class="btn ghost sm" data-tr="sim-all">Simulate ${leagueLeft === league.length ? 'the league' : `the other ${leagueLeft}`}</button>` : ''}${anySim ? '<button type="button" class="btn ghost sm danger" data-tr="sim-clear">Clear simulated results</button>' : ''}${ko.length || t.teams.length < 2 ? '' : '<button type="button" class="btn ghost sm" data-tr="ko">Set up knockouts</button>'}</div></div>
       ${fxs || '<p class="hint" style="margin:0">No fixtures yet. “Add round-robin fixtures” creates the league: every pair of teams once or twice, or the IPL format with ten teams.</p>'}
       ${t.groups && fxs ? `<p class="hint">Groups: ${t.groups.map((g, k) => `${'AB'[k]}: ${g.map(esc).join(', ')}`).join(' · ')}.</p>` : ''}
       ${fxs ? '<p class="hint">“Simulate” makes up a realistic result instead of scoring the match, which is handy for trying out a tournament. Each one comes with a full scorecard (using the squads, if you add them), and about one in 30 league matches is washed out. Simulated results are marked and can be cleared; scored matches are never touched.</p>' : ''}
@@ -626,6 +628,47 @@ function koForm(t) {
   });
 }
 
+// Fixtures typed or pasted in: "Team v Team", optionally with a date and a ground after "|".
+function importForm(t) {
+  const body = openModal('Add fixtures from a list', `
+    <div class="field wide"><div class="lab"><label for="im-text">Matches, one per line</label></div><textarea id="im-text" rows="8" spellcheck="false" placeholder="Falcons v Rhinos | 28 Mar 2026 | Riverside Oval&#10;Tigers v Eagles | 29 Mar 2026&#10;Rhinos v Tigers"></textarea></div>
+    <p class="hint">Write “A v B” (or “A vs B”). After a “|” you can add a date, like 28 Mar 2026 or 2026-03-28, and a ground. Team names must match the tournament's teams. The first team named is at home. Matches already in the league are kept, so if you're replacing the league, remove the old fixtures first. A list with dates keeps its order, so it is played out in the order you give.</p>
+    <p class="err-text" id="im-err"></p>
+    <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Add these matches</button></div>`, { wide: true });
+  const parseDate = v => {
+    const x = v.trim(); let m;
+    if ((m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(x))) return x;
+    if ((m = /^(\d{1,2})\s+([A-Za-z]{3})[a-z]*\.?\s*(\d{4})?$/.exec(x))) {
+      const mo = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(m[2].toLowerCase());
+      if (mo >= 0) return `${m[3] || new Date().getFullYear()}-${String(mo + 1).padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+    }
+    return null;
+  };
+  body.addEventListener('click', async e => {
+    const x = e.target.closest('[data-x]');
+    if (!x) return;
+    const err = $('#im-err', body);
+    if (x.dataset.x === 'cancel') { closeModal(); return; }
+    const lines = $('#im-text', body).value.split('\n').map(l => l.trim()).filter(Boolean);
+    if (!lines.length) { err.textContent = 'Type or paste at least one match.'; return; }
+    const out = [];
+    for (const [k, l] of lines.entries()) {
+      const [pair, ...rest] = l.split('|').map(v => v.trim());
+      const m = /^(.+?)\s+(?:v|vs|vs\.|versus)\s+(.+)$/i.exec(pair);
+      if (!m) { err.textContent = `Line ${k + 1}: write it like “Falcons v Rhinos”.`; return; }
+      const A = t.teams.find(n => same(n, m[1])), B = t.teams.find(n => same(n, m[2]));
+      if (!A || !B) { err.textContent = `Line ${k + 1}: “${!A ? m[1] : m[2]}” isn't one of the tournament's teams.`; return; }
+      if (A === B) { err.textContent = `Line ${k + 1}: a team can't play itself.`; return; }
+      let date = null, venue = null;
+      for (const r of rest) { const d = parseDate(r); if (d && !date) date = d; else if (r && !venue) venue = r; }
+      out.push({ id: uid(), a: A, b: B, date, venue, matchId: null, manual: null, nr: false });
+    }
+    out.forEach(f => { if (!f.date) delete f.date; if (!f.venue) delete f.venue; });
+    t.fixtures = [...t.fixtures.filter(f => !f.stage), ...out, ...t.fixtures.filter(f => f.stage)];
+    update(t); closeModal(); RENDER.tournament(); toast(`${plural(out.length, 'match', 'matches')} added`);
+  });
+}
+
 // League fixtures: every pair once, every pair twice (home and away), or the IPL's 14-match format for ten teams.
 function rrForm(t) {
   const n = t.teams.length, ten = n === 10;
@@ -633,7 +676,7 @@ function rrForm(t) {
     <div class="seg" role="group" aria-label="Format" style="flex-wrap:wrap">
       <button type="button" data-rr="1" aria-pressed="true">Play each other once</button>
       <button type="button" data-rr="2" aria-pressed="false">Twice (home and away)</button>
-      ${ten ? '<button type="button" data-rr="ipl" aria-pressed="false">IPL format</button>' : ''}
+      ${ten ? '<button type="button" data-rr="ipl" aria-pressed="false">IPL 2026 format</button><button type="button" data-rr="ipl22" aria-pressed="false">Older IPL format (2022–25)</button>' : ''}
     </div>
     ${ten ? '<label class="check" id="rr-draw-l" style="margin-top:10px" hidden><input type="checkbox" id="rr-draw" checked> Draw the two groups at random (untick to use the order the teams are listed)</label>' : ''}
     <p class="hint" id="rr-desc"></p>
@@ -641,10 +684,12 @@ function rrForm(t) {
   let mode = '1';
   const desc = () => {
     const draw = $('#rr-draw', body);
-    if (draw) $('#rr-draw-l', body).hidden = mode !== 'ipl';
+    if (draw) $('#rr-draw-l', body).hidden = !mode.startsWith('ipl');
     $('#rr-desc', body).textContent = mode === 'ipl'
-        ? `Two groups of five${draw?.checked ? ', drawn at random' : `: ${t.teams.slice(0, 5).join(', ')} and ${t.teams.slice(5).join(', ')}`}. Each team plays its own group twice, the team in the same place in the other group twice, and the other four once: 14 matches each, 70 in all. Home and away are shared out, and the matches are spread through the season.`
-        : mode === '2' ? `Every team plays every other team twice: ${2 * (n - 1)} matches each, ${n * (n - 1)} in all.` : `Every team plays every other team once: ${n - 1} matches each, ${n * (n - 1) / 2} in all.`;
+        ? `Two groups of five${draw?.checked ? ', drawn at random' : `: ${t.teams.slice(0, 5).join(', ')} and ${t.teams.slice(5).join(', ')}`}. Each team plays the other four in its own group once, and the five teams in the other group twice, home and away: 14 matches each, 70 in all. Home and away are shared out, and the matches are spread through the season. To use the real match order instead, paste the fixtures with “Add fixtures from a list”.`
+        : mode === 'ipl22'
+            ? `Two groups of five${draw?.checked ? ', drawn at random' : `: ${t.teams.slice(0, 5).join(', ')} and ${t.teams.slice(5).join(', ')}`}. Each team plays its own group twice, the team in the same place in the other group twice, and the other four once: 14 matches each, 70 in all. Home and away are shared out, and the matches are spread through the season.`
+            : mode === '2' ? `Every team plays every other team twice: ${2 * (n - 1)} matches each, ${n * (n - 1)} in all.` : `Every team plays every other team once: ${n - 1} matches each, ${n * (n - 1) / 2} in all.`;
     body.querySelectorAll('[data-rr]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.rr === mode)));
   };
   desc();
@@ -658,15 +703,16 @@ function rrForm(t) {
     let order = t.teams.slice();
     const hasLeague = t.fixtures.some(y => !y.stage);
     // Fixtures already made from a draw: keep that draw, or re-running would pair the teams differently.
-    if (mode === 'ipl' && hasLeague && t.groups?.flat().length === n && t.groups.flat().every(v => t.teams.includes(v))) order = t.groups.flat();
-    else if (mode === 'ipl') {
+    if (mode.startsWith('ipl') && hasLeague && t.groups?.flat().length === n && t.groups.flat().every(v => t.teams.includes(v))) order = t.groups.flat();
+    else if (mode.startsWith('ipl')) {
       if ($('#rr-draw', body)?.checked) order = order.map(v => [Math.random(), v]).sort((p, q) => p[0] - q[0]).map(p => p[1]);
       t.groups = [order.slice(0, 5), order.slice(5)];
     }
     // How many times each pair should meet.
     const times = (i, j) => {
-      if (mode !== 'ipl') return Number(mode);
+      if (!mode.startsWith('ipl')) return Number(mode);
       const gi = i < 5 ? 0 : 1, gj = j < 5 ? 0 : 1;
+      if (mode === 'ipl') return gi === gj ? 1 : 2; // 2026: own group once, the other group twice
       return gi === gj || i % 5 === j % 5 ? 2 : 1;
     };
     const pairs = [];
@@ -716,6 +762,7 @@ $('#tr-main').addEventListener('click', async e => {
   const f = t.fixtures.find(x => x.id === b.dataset.f);
   switch (a) {
     case 'rr': rrForm(t); break;
+    case 'import': importForm(t); break;
     case 'sim': if (f && simulateFixture(t, f)) { syncFinal(t, new Map(finishedMatches().map(m => [m.id, m]))); update(t); RENDER.tournament(); toast('Result simulated'); } break;
     case 'sim-all': {
       let n = 0;
