@@ -56,6 +56,9 @@ const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export const sqOf = (m, team) => (m && Array.isArray(m.squads?.[team]) && m.squads[team].length >= 2) ? m.squads[team] : null;
 // With the Impact Player rule a squad lists 12 (the XI plus the impact player), but only 11 can bat.
 const capXI = (m, n) => (m?.impact ? Math.min(11, n) : n);
+// Impact Player: until the swap the 12th name is on the bench; after it, the player who was replaced is out of the match.
+export const benchOf = (m, team) => { const sq = m?.impact ? sqOf(m, team) : null; if (!sq || sq.length !== 12) return null; const u = m.subs?.[team]; return u ? u.out : sq[11]; };
+export const playersOf = (m, team) => { const sq = sqOf(m, team), b = benchOf(m, team); return sq && b ? sq.filter(n => n.toLowerCase() !== b.toLowerCase()) : sq; };
 export const ppsOf = (m, inn) => capXI(m, sqOf(m, inn.bat)?.length || m.pps);
 const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
 const selectField = (id, label, opts, sel) => `<div class="field"><div class="lab"><label for="${id}">${esc(label)}</label></div><select id="${id}">${opts.map(o => `<option value="${esc(o.v)}"${o.v === sel ? ' selected' : ''}>${esc(o.l)}</option>`).join('')}</select></div>`;
@@ -124,6 +127,7 @@ function runEntry(e) {
     case 'rain': return coreRain(e.lost, e.noMore);
     case 'session': return coreSession(e.stumps);
     case 'newball': return coreNewBall();
+    case 'impact': return coreImpact(e.team, e.out);
     case 'dayovers': return coreDayOvers(e.overs);
     default: return 'an unknown action';
   }
@@ -363,6 +367,7 @@ function commentAction(e, before) {
     case 'retire': { const r = i.batters.find(b => b.retired && before.crease.includes(b.name)); if (r) say('event', `${r.name} retires hurt, ${r.runs} (${r.balls})`); break; }
     case 'pen': say('event', `5 penalty runs to ${e.bat ? live.teams[i.bat] : live.teams[1 - i.bat]}`); break;
     case 'session': { const s = live.sessions?.[live.sessions.length - 1]; if (s) say('session', `${s.label}, day ${s.day}: ${s.text}`); break; }
+    case 'impact': { const u = live.subs?.[e.team]; if (u) say('event', `Impact Player: ${u.in} replaces ${u.out} for ${live.teams[e.team]}`); break; }
     case 'dayovers': say('event', `Overs for day ${clockOf().day} set to ${e.overs}${e.overs < 90 ? ' (time lost to rain or bad light)' : e.overs > 90 ? ' (extra time to make up lost overs)' : ''}`); break;
     case 'newball': say('event', `New ball taken after ${fmtOvers(i.balls - (before.newBallFrom || 0))} overs`); break;
     case 'rain': {
@@ -987,11 +992,62 @@ export function computeResult() {
   return `${t1} won by ${plural(i2.target - 1 - i2.runs, 'run')}${dl}`;
 }
 
+// Impact Player: `out` leaves the match and the 12th name in the squad comes in.
+function coreImpact(team, out) {
+  if (!live.impact) return 'the Impact Player rule is off';
+  if (live.status === 'done') return 'the match had already finished';
+  const sq = sqOf(live, team);
+  if (!sq || sq.length !== 12) return 'that team needs a squad of 12 names';
+  if (live.subs?.[team]) return `${live.teams[team]} have already used their impact player`;
+  const o = sq.slice(0, 11).find(n => sameName(n, out));
+  if (!o) return 'pick a player from the playing XI';
+  if (live.status === 'live') {
+    const i = cur();
+    if (i.bat === team && [i.striker, i.non].some(k => i.batters[k] && sameName(i.batters[k].name, o))) return `${o} is batting`;
+    if (i.bat !== team && !i.needBowler && i.bowlers[i.bowler] && sameName(i.bowlers[i.bowler].name, o)) return `${o} is bowling this over`;
+  }
+  live.subs = [live.subs?.[0] || null, live.subs?.[1] || null];
+  live.subs[team] = { out: o, in: sq[11] };
+  return null;
+}
+const impactAvail = () => !!live && live.impact && live.status !== 'done' && [0, 1].some(t => sqOf(live, t)?.length === 12 && !live.subs?.[t]);
+function impactModal() {
+  if (!impactAvail()) { toast('No impact player is left to bring on.'); return; }
+  const avail = [0, 1].filter(t => sqOf(live, t)?.length === 12 && !live.subs?.[t]);
+  let team = avail[0];
+  const body = openModal('Impact player', `
+    <div class="modal-block"${avail.length < 2 ? ' hidden' : ''}><p class="modal-sub">Which team</p><div class="seg" id="ip-team">${avail.map(t => `<button type="button" data-t="${t}" aria-pressed="${t === team}">${esc(live.teams[t])}</button>`).join('')}</div></div>
+    <div id="ip-body"></div>
+    <p class="err-text" id="ip-err"></p>
+    <p class="hint">The player who goes off takes no further part: they can't bat, bowl or field. A team gets one impact player. Undo reverses this.</p>
+    <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Make the change</button></div>`);
+  const draw = () => {
+    const sq = sqOf(live, team), i = live.status === 'live' ? cur() : null;
+    const busy = n => i && ((i.bat === team && [i.striker, i.non].some(k => i.batters[k] && sameName(i.batters[k].name, n))) || (i.bat !== team && !i.needBowler && i.bowlers[i.bowler] && sameName(i.bowlers[i.bowler].name, n)));
+    const opts = sq.slice(0, 11).filter(n => !busy(n)).map(n => ({ v: n, l: n + roleTag(live, team, n) }));
+    $('#ip-body', body).innerHTML = `<p style="margin:0 0 10px"><b>${esc(sq[11] + roleTag(live, team, sq[11]))}</b> comes on for ${esc(live.teams[team])}.</p>${selectField('ip-out', 'Replaces', opts, opts[0]?.v)}`;
+  };
+  draw();
+  body.addEventListener('click', e => {
+    const t = e.target.closest('[data-t]'), x = e.target.closest('[data-x]');
+    if (t) { team = Number(t.dataset.t); body.querySelectorAll('[data-t]').forEach(b => b.setAttribute('aria-pressed', String(b === t))); draw(); return; }
+    if (!x) return;
+    if (x.dataset.x === 'cancel') { closeModal(); return; }
+    const out = $('#ip-out', body)?.value;
+    const err = act({ t: 'impact', team, out }, () => coreImpact(team, out));
+    if (err) { $('#ip-err', body).textContent = `Can't do that: ${err}.`; return; }
+    closeModal();
+    toast(`${live.subs[team].in} comes on for ${live.subs[team].out}`);
+  });
+}
+
 function coreBowler(name) {
   const i = cur();
   const nm = (name || '').trim();
   if (live.status !== 'live' || !i.needBowler) return 'a new over hadn\'t started at that point';
   if (!nm) return 'Type the bowler\'s name.';
+  const bench = benchOf(live, 1 - i.bat);
+  if (bench && sameName(bench, nm)) return live.subs?.[1 - i.bat] ? `${bench} has been replaced by the impact player.` : `${bench} is the impact player and hasn't come on yet.`;
   let idx = i.bowlers.findIndex(b => sameName(b.name, nm));
   if (idx !== -1 && idx === i.lastBowler) return `${i.bowlers[idx].name} bowled the last over. Pick someone else.`;
   if (idx !== -1 && live.overs) {
@@ -1125,7 +1181,7 @@ function setupSync(target) {
     $(`#ls-sq${s}-list`).innerHTML = sq.map(n => `<option value="${esc(n)}"></option>`).join('');
     const fill = (fid, v) => { const el = $('#' + fid); if (el && el.dataset.auto === '1' && v) el.value = v; };
     if (s === 'a' && sq.length >= 2) { fill('ls-s', sq[0]); fill('ls-ns', sq[1]); }
-    if (s === 'b' && sq.length >= 2) fill('ls-bw', sq[sq.length - 1]);
+    if (s === 'b' && sq.length >= 2) fill('ls-bw', sq[maxSq === 12 && sq.length === 12 ? 10 : sq.length - 1]); // the impact player (12th) can't open
   });
   const both = ['a', 'b'].map(s => parseSquad($('#ls-sq' + s)?.value)).filter(q => q.length >= 2);
   const pps = $('#ls-pps');
@@ -1155,6 +1211,9 @@ export function startMatch() {
   let s = g('ls-s') || 'Batter 1', ns = g('ls-ns') || 'Batter 2', bw = g('ls-bw') || 'Bowler 1';
   if (sameName(s, ns)) { err.textContent = 'The two openers need different names.'; return; }
   const inSq = (sq, nm) => sq.find(x => sameName(x, nm));
+  if (impact && squads[0].length === 12 && sameName(squads[0][11], s)) { err.textContent = `${s} is the impact player and can't open.`; return; }
+  if (impact && squads[0].length === 12 && sameName(squads[0][11], ns)) { err.textContent = `${ns} is the impact player and can't open.`; return; }
+  if (impact && squads[1].length === 12 && sameName(squads[1][11], bw)) { err.textContent = `${bw} is the impact player and can't open the bowling.`; return; }
   if (squads[0].length) {
     if (!inSq(squads[0], s) || !inSq(squads[0], ns)) { err.textContent = `Both openers must be in the ${ta} squad.`; return; }
     s = inSq(squads[0], s); ns = inSq(squads[0], ns);
@@ -1222,7 +1281,7 @@ export function boardHTML() {
 }
 
 function bowlerPicker(i) {
-  const fsq = sqOf(live, 1 - i.bat);
+  const fsq = playersOf(live, 1 - i.bat);
   if (!fsq) return liveField('live-bowler', 'Bowler', '', { list: 'live-bowlers' });
   const cap = live.overs ? bowlCap(i) : Infinity;
   const find = nm => i.bowlers.findIndex(b => sameName(b.name, nm));
@@ -1284,6 +1343,7 @@ export function liveHTML(animateLast) {
             <button type="button" class="btn ghost sm" data-act="swap">Swap strike</button>
             <button type="button" class="btn ghost sm" data-act="retire">Retire batter</button>
             <button type="button" class="btn ghost sm" data-act="penalty">Penalty runs</button>
+            ${impactAvail() ? '<button type="button" class="btn ghost sm" data-act="impact">Impact player</button>' : ''}
             ${live.overs && !isTest() ? '<button type="button" class="btn ghost sm" data-act="rain">Rain / stoppage</button>' : ''}
             <button type="button" class="btn ghost sm" data-act="rename">Edit names</button>
             <button type="button" class="btn ghost sm danger" data-act="end-inn">${isTest() ? 'Declare' : 'End innings'}</button>
@@ -1424,7 +1484,7 @@ export function breakHTML() {
       : chaseTitle(t2, plannedChase());
   const fo = test && nx.canFollowOn ? `<div class="modal-block"><p class="modal-sub">${esc(live.teams[live.inns[0].bat])} lead by ${plural(nx.lead, 'run')}, so they can enforce the follow-on</p>
     <div class="seg"><button type="button" data-act="fo" data-v="0" aria-pressed="${!followOn}">${esc(live.teams[live.inns[0].bat])} bat again</button><button type="button" data-act="fo" data-v="1" aria-pressed="${followOn}">Enforce the follow-on: ${esc(live.teams[live.inns[1].bat])} bat again</button></div></div>` : '';
-  const bsq = sqOf(live, batTeam), fsq = sqOf(live, 1 - batTeam);
+  const bsq = playersOf(live, batTeam), fsq = playersOf(live, 1 - batTeam);
   const opts = (sq, team) => sq.map(nm => ({ v: nm, l: nm + roleTag(live, team, nm) }));
   return `${boardHTML()}
   <div class="card prompt-card">
@@ -1440,6 +1500,7 @@ export function breakHTML() {
     <div class="modal-actions" style="justify-content:flex-start">
       <button type="button" class="btn" data-act="start-2nd">Start ${test ? ORD[n] : 'second'} innings</button>
       ${test ? '<button type="button" class="btn ghost" data-act="draw">End as a draw</button>' : '<button type="button" class="btn ghost" data-act="abandon">No result</button>'}
+      ${impactAvail() ? '<button type="button" class="btn ghost" data-act="impact">Impact player</button>' : ''}
       <button type="button" class="btn ghost" data-act="undo"${undoStack.length ? '' : ' disabled'}>Undo last ball</button>
     </div>
   </div>
@@ -1563,6 +1624,7 @@ export function scorecardHTML(m, idx) {
     <div class="sc-head"><h3>${esc(team)} · innings ${idx + 1}</h3><span class="sc-total">${i.runs}/${i.wkts} <span class="dim" style="font-size:.8em">(${fmtOvers(i.balls)} ov, RR ${rr})</span></span></div>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Batter</th><th>Dismissal</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th></tr></thead><tbody>${bats}</tbody></table></div>
     <p class="sc-meta">Extras ${exT} (b ${ex.b}, lb ${ex.lb}, w ${ex.wd}, nb ${ex.nb}${ex.pen ? `, pen ${ex.pen}` : ''})${i.target != null ? ` · Target ${i.target}${i.dls ? ' (DLS)' : ''}` : ''}${i.maxBalls != null && m.overs && i.maxBalls !== m.overs * 6 ? ` · Reduced to ${fmtOvers(i.maxBalls)} overs` : ''}${i.ended ? ` · ${esc(endedText(i.ended, m))}` : ''}</p>
+    ${m.subs?.[i.bat] || m.subs?.[1 - i.bat] ? `<p class="sc-meta">${[i.bat, 1 - i.bat].filter(t => m.subs?.[t]).map(t => `Impact player (${esc(m.teams[t])}): ${esc(m.subs[t].in)} for ${esc(m.subs[t].out)}`).join(' · ')}</p>` : ''}
     ${i.fow.length ? `<p class="sc-meta">Fall of wickets: ${i.fow.map(w => `${w.score}-${w.wkt} (${esc(w.name)}, ${w.over} ov)`).join(', ')}</p>` : ''}
     ${partsHTML(m, i)}
     ${(() => {
@@ -1825,7 +1887,7 @@ export function pickRuns(title, note, options, onPick) {
 }
 function batterNameField(i, id, label) {
   const back = i.batters.filter(b => b.retired);
-  const sq = sqOf(live, i.bat);
+  const sq = playersOf(live, i.bat);
   if (sq) {
     const yet = sq.filter(n => !i.batters.some(b => sameName(b.name, n)));
     const opts = [...yet.map(n => ({ v: n, l: n + roleTag(live, i.bat, n) })), ...back.map(b => ({ v: b.name, l: `${b.name} (retired, returning)` }))];
@@ -1837,7 +1899,7 @@ function batterNameField(i, id, label) {
     ${back.length ? `<p class="hint" style="grid-column:1/-1;margin:0">Type ${back.map(b => esc(b.name)).join(' or ')} to bring a retired batter back in.</p>` : ''}`;
 }
 function fielderField(i) {
-  const fsq = sqOf(live, 1 - i.bat);
+  const fsq = playersOf(live, 1 - i.bat);
   if (!fsq) return `<div class="lab"><label for="wk-fielder">Fielder</label></div><input id="wk-fielder" type="text" maxlength="30" autocomplete="off" placeholder="Optional">`;
   const bowler = i.bowlers[i.bowler]?.name;
   const opts = [{ v: '', l: 'Not recorded' }, ...fsq.map(n => ({ v: n, l: n + roleTag(live, 1 - i.bat, n) + (bowler && sameName(n, bowler) ? ' (bowler)' : '') })), { v: 'sub', l: 'Substitute fielder' }];
@@ -2023,6 +2085,7 @@ export async function liveAction(action, el) {
     case 'retire': retireModal(); break;
     case 'penalty': penaltyModal(); break;
     case 'rain': rainModal(); break;
+    case 'impact': impactModal(); break;
     case 'dayovers': dayOversModal(); break;
     case 'session': {
       const stumps = el.dataset.v === '1', c = clockOf();
