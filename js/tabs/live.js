@@ -54,7 +54,9 @@ const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Who can still come in: unused players, or a retired batter returning.
 // Squads: optional named lists per team, in batting order. Players per side follows the squad size.
 export const sqOf = (m, team) => (m && Array.isArray(m.squads?.[team]) && m.squads[team].length >= 2) ? m.squads[team] : null;
-export const ppsOf = (m, inn) => sqOf(m, inn.bat)?.length || m.pps;
+// With the Impact Player rule a squad lists 12 (the XI plus the impact player), but only 11 can bat.
+const capXI = (m, n) => (m?.impact ? Math.min(11, n) : n);
+export const ppsOf = (m, inn) => capXI(m, sqOf(m, inn.bat)?.length || m.pps);
 const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
 const selectField = (id, label, opts, sel) => `<div class="field"><div class="lab"><label for="${id}">${esc(label)}</label></div><select id="${id}">${opts.map(o => `<option value="${esc(o.v)}"${o.v === sel ? ' selected' : ''}>${esc(o.l)}</option>`).join('')}</select></div>`;
 export const freshLeft = i => ppsOf(live, i) - i.batters.length;
@@ -836,7 +838,7 @@ export function daysHTML(m) {
 }
 
 /* ---------- Test cricket: result chances, follow-on, declarations, new ball ---------- */
-const wlOf = (m, t) => (sqOf(m, t)?.length || m.pps || 11) - 1;
+const wlOf = (m, t) => capXI(m, sqOf(m, t)?.length || m.pps || 11) - 1;
 // Win / draw / lose chances from the match as it stands (see testsim.js for how it plays the rest out).
 function chancesInput(m, declareNow) {
   if (!isTest(m) || m.status === 'done') return null;
@@ -1065,6 +1067,7 @@ export function setupHTML() {
       ${liveField('ls-tb', 'Bowling first', tB)}
       ${liveField('ls-ov', 'Overs per side', prefill?.overs ?? f.overs ?? '', { im: 'numeric', max: 3 })}
       ${selectField('ls-type', 'Match type', [{ v: 'limited', l: 'Limited overs' }, { v: 'test', l: 'Test: two innings each' }], f.key === 'Test' && !prefill ? 'test' : 'limited')}
+      ${selectField('ls-imp', 'Impact Player rule', [{ v: '0', l: 'Off: squads of up to 11' }, { v: '1', l: 'On: up to 12, the 12th is the impact player' }], prefill?.impact ? '1' : '0')}
       ${selectField('ls-days', 'Days left when play starts (sets the follow-on)', [5, 4, 3, 2, 1].map(d => ({ v: String(d), l: `${d} day${d > 1 ? 's' : ''} · follow-on at ${FOLLOW_ON[d]}` })), '5')}
     </div>
     <div class="modal-actions" style="justify-content:flex-start;margin-top:10px"><button type="button" class="btn ghost sm" data-act="swap-teams">Swap batting order</button></div>
@@ -1075,7 +1078,7 @@ export function setupHTML() {
         <span class="sq-count" id="ls-sq${s}-c"></span>
       </div>`).join('')}
     </div>
-    <p class="hint">With squads entered, new batters, bowlers and fielders are picked from a list during the match, and each team's size sets its players per side. Add (c) after the captain and (wk) after the wicketkeeper, for example “Asif (c)” or “Kiran (c) (wk)”. They're tagged on the scorecard, and stumpings pick the keeper automatically. Squads are remembered by team name for next time.</p>
+    <p class="hint">With squads entered, new batters, bowlers and fielders are picked from a list during the match, and each team's size sets its players per side. With the Impact Player rule on, list 12: any of them can bat or bowl, but only 11 bat, so a side is still all out at 10 wickets. Add (c) after the captain and (wk) after the wicketkeeper, for example “Asif (c)” or “Kiran (c) (wk)”. They're tagged on the scorecard, and stumpings pick the keeper automatically. Squads are remembered by team name for next time.</p>
     <div class="setup-grid" style="margin-top:14px">
       ${auto('ls-s', 'Striker', sqA[0] || 'Batter 1').replace('maxlength', 'list="ls-sqa-list" maxlength')}
       ${auto('ls-ns', 'Non-striker', sqA[1] || 'Batter 2').replace('maxlength', 'list="ls-sqa-list" maxlength')}
@@ -1098,6 +1101,7 @@ function swapSetupTeams() {
 function setupSync(target) {
   const id = target?.id || '';
   const test = $('#ls-type')?.value === 'test';
+  const maxSq = $('#ls-imp')?.value === '1' ? 12 : 11;
   const ovEl = $('#ls-ov'), daysWrap = $('#ls-days')?.closest('.field');
   if (ovEl) { ovEl.disabled = test; if (test) ovEl.value = ''; else if (!ovEl.value && id === 'ls-type') ovEl.value = String(fmt().overs ?? 20); }
   if (daysWrap) daysWrap.hidden = !test;
@@ -1116,8 +1120,8 @@ function setupSync(target) {
     $('#ls-sq' + s + '-l').textContent = `${team || (s === 'a' ? 'Batting first' : 'Bowling first')} players`;
     const { names: sq, keeper, captain } = parseSquadFull(ta.value);
     const dup = sq.find((n, k) => sq.findIndex(x => sameName(x, n)) !== k);
-    $('#ls-sq' + s + '-c').textContent = !sq.length ? 'No squad: you will type names as you go.' : dup ? `“${dup}” appears twice.` : sq.length === 1 ? 'Add at least one more player, or leave it empty.' : sq.length > 11 ? `${sq.length} names: the most is 11.` : `${plural(sq.length, 'player')} · ${captain ? `captain: ${captain}` : 'no captain marked'} · ${keeper ? `keeper: ${keeper}` : 'no keeper marked'}`;
-    $('#ls-sq' + s + '-c').classList.toggle('bad-text', !!dup || sq.length === 1 || sq.length > 11);
+    $('#ls-sq' + s + '-c').textContent = !sq.length ? 'No squad: you will type names as you go.' : dup ? `“${dup}” appears twice.` : sq.length === 1 ? 'Add at least one more player, or leave it empty.' : sq.length > maxSq ? `${sq.length} names: the most is ${maxSq}.` : `${plural(sq.length, 'player')} · ${captain ? `captain: ${captain}` : 'no captain marked'} · ${keeper ? `keeper: ${keeper}` : 'no keeper marked'}`;
+    $('#ls-sq' + s + '-c').classList.toggle('bad-text', !!dup || sq.length === 1 || sq.length > maxSq);
     $(`#ls-sq${s}-list`).innerHTML = sq.map(n => `<option value="${esc(n)}"></option>`).join('');
     const fill = (fid, v) => { const el = $('#' + fid); if (el && el.dataset.auto === '1' && v) el.value = v; };
     if (s === 'a' && sq.length >= 2) { fill('ls-s', sq[0]); fill('ls-ns', sq[1]); }
@@ -1125,7 +1129,7 @@ function setupSync(target) {
   });
   const both = ['a', 'b'].map(s => parseSquad($('#ls-sq' + s)?.value)).filter(q => q.length >= 2);
   const pps = $('#ls-pps');
-  if (pps) { pps.disabled = both.length === 2; if (both.length === 2) pps.value = String(both[0].length === both[1].length ? both[0].length : Math.max(both[0].length, both[1].length)); }
+  if (pps) { pps.disabled = both.length === 2; if (both.length === 2) pps.value = String(Math.min(maxSq === 12 ? 11 : 99, Math.max(both[0].length, both[1].length))); }
 }
 export function startMatch() {
   const g = id => ($('#' + id)?.value ?? '').trim();
@@ -1133,6 +1137,7 @@ export function startMatch() {
   const ta = g('ls-ta') || 'Team A', tb = g('ls-tb') || 'Team B';
   const ovS = g('ls-ov'), ppsS = g('ls-pps');
   const test = g('ls-type') === 'test';
+  const impact = g('ls-imp') === '1' && !test, maxSq = impact ? 12 : 11;
   const ov = ovS === '' || test ? null : Number(ovS);
   const pps = Number(ppsS || 11);
   if (sameName(ta, tb)) { err.textContent = 'Give the two teams different names.'; return; }
@@ -1142,7 +1147,7 @@ export function startMatch() {
   for (const [k, sq] of squads.entries()) {
     const team = k ? tb : ta;
     if (sq.length === 1) { err.textContent = `${team}: add at least two players, or leave the squad empty.`; return; }
-    if (sq.length > 11) { err.textContent = `${team}: a squad can have at most 11 players.`; return; }
+    if (sq.length > maxSq) { err.textContent = `${team}: a squad can have at most ${maxSq} players${impact ? ' (the XI and the impact player)' : ''}.`; return; }
     const dup = sq.find((n, j) => sq.findIndex(x => sameName(x, n)) !== j);
     if (dup) { err.textContent = `${team}: “${dup}” is listed twice.`; return; }
   }
@@ -1163,6 +1168,7 @@ export function startMatch() {
   if (squads[1].length) saved[tb.toLowerCase()] = markRoles(squads[1], full[1].keeper, full[1].captain);
   store.set('squads', saved);
   live = { id: uid(), created: Date.now(), teams: [ta, tb], overs: ov, pps, squads: squads.map(q => q.length ? q : null), keepers: full.map(f => f.names.length ? f.keeper : null), captains: full.map(f => f.names.length ? f.captain : null), format: test ? 'Test' : fmt().label, status: 'live', inns: [newInnings(0, s, ns, bw, null)], result: null };
+  if (impact) live.impact = true;
   if (test) { live.matchType = 'test'; live.days = Number(g('ls-days')) || 5; live.followOn = FOLLOW_ON[live.days] || 200; live.clock = { day: 1, s: 0, start: [], dayStart: [] }; live.sessions = []; }
   if (prefill?.link) live.tournament = prefill.link;
   prefill = null;
@@ -2090,7 +2096,7 @@ $('#live-cards').addEventListener('toggle', e => {
   else bbbOpen.delete(k);
 }, true);
 $('#tab-live').addEventListener('change', e => {
-  if (!live && e.target.id === 'ls-type') setupSync(e.target);
+  if (!live && (e.target.id === 'ls-type' || e.target.id === 'ls-imp')) setupSync(e.target);
   if (e.target.id === 'ww-on') { e.target.blur(); store.set('wwOn', e.target.checked); toast(e.target.checked ? 'You\'ll be asked where each scoring shot went' : 'Wagon wheel prompts off'); }
   if (e.target.id === 'ww-who') { wwSel = e.target.value; liveCharts(live); }
   if (e.target.id === 'ww-lh') { const nm = e.target.dataset.name; const l = store.get('lefties', {}); if (e.target.checked) l[nm] = true; else delete l[nm]; store.set('lefties', l); liveCharts(live); }
