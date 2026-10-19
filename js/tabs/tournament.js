@@ -2,9 +2,9 @@
    Results come from matches scored in the live scorer (linked automatically when a fixture is
    scored from here), from a saved match linked by hand, or from scores typed in. */
 import { fmtOvers, parseOvers } from '../maths.js';
-import { buildRecords, finishedMatches, nameKey } from '../records.js';
+import { finishedMatches, nameKey, parseDismissal } from '../records.js';
 import { RENDER, appHooks, showTab } from '../router.js';
-import { TIEBREAKS, fixtureOutcome, pointsTable, qualification } from '../stats.js';
+import { TIEBREAKS, decided, fixtureOutcome, nrrOf, pointsTable, qualification } from '../stats.js';
 import { closeModal, confirmBox, openModal, toast } from '../ui.js';
 import { $, esc, nf, plural, store, uid } from '../utils.js';
 import { clearLive, live, matchHooks, openScorecard, setupFromFixture } from './live.js';
@@ -69,6 +69,13 @@ function syncFinal(t, byId) {
    For trying out a tournament without scoring every match. Each team gets a hidden strength when the
    first match is simulated, so some sides are better than others, like a real league. Scores follow
    typical totals for the overs (about 165 in a T20, 280 in a 50-over match). */
+// Typical scoring rate for the overs: about 165 in a T20, 280 in a 50-over match.
+const rpoFor = O => (O <= 10 ? 10.5 - (O - 5) * 0.2 : O <= 20 ? 9.5 - (O - 10) * 0.125 : O <= 50 ? 8.25 - (O - 20) * 0.088 : 5.6);
+// Powerplay, middle and death overs: 1–6, 7–15 and 16–20 in a T20; 1–10, 11–40 and 41–50 in a 50-over match.
+const phaseCuts = O => [O <= 20 ? Math.round(O * 0.3) : Math.round(O * 0.2), O <= 20 ? Math.round(O * 0.25) : Math.round(O * 0.2)];
+const phaseOf = (i, O) => { const [pp, de] = phaseCuts(O); return i < pp ? 0 : i >= O - de ? 2 : 1; };
+const PHASES = ['Powerplay', 'Middle overs', 'Death overs'];
+const phaseOvers = O => { const [pp, de] = phaseCuts(O), r = (x, y) => (x > y ? 'none' : x === y ? `${x}` : `${x}–${y}`); return [r(1, pp), r(pp + 1, O - de), r(O - de + 1, O)]; };
 const normal = () => { let u = 0; while (!u) u = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random()); };
 const rint = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
 const pick = arr => arr[Math.floor(Math.random() * arr.length)];
@@ -148,15 +155,50 @@ function simCard(t, batTeam, fieldTeam, inn) {
     }
     return row;
   });
-  return { bat, bowl: used, extras, dnb: XI.slice(n) };
+  const runOuts = Math.max(0, inn.w - used.reduce((a, b) => a + b.wkts, 0));
+  return { bat, bowl: used, extras, dnb: XI.slice(n), ov: overPlan(O, inn, used, extras - bowlerExtras, runOuts) };
+}
+// Who bowled each over, and the runs and wickets in it, so simulated matches have powerplay and death-over figures.
+function overPlan(O, inn, used, otherExtras, runOuts) {
+  const overs = Math.ceil(inn.balls / 6);
+  if (!overs || !used.length) return [];
+  const rem = used.map(b => Math.ceil(b.balls / 6));
+  const part = inn.balls % 6 ? used.findIndex(b => b.balls % 6) : -1; // the bowler of an unfinished last over
+  const seq = Array(overs).fill(-1);
+  let L = overs;
+  if (part >= 0) { seq[overs - 1] = part; rem[part]--; L = overs - 1; }
+  // Openers and the strike bowlers take the new ball and the death; the others bowl through the middle.
+  const PREF = [[3, 3, 2, 0, 0, 1], [0, 0, 2, 2, 3, 3], [3, 3, 1, 2, 0, 0]];
+  for (let i = 0; i < L; i++) {
+    const prev = i ? seq[i - 1] : -1, next = i === L - 1 && part >= 0 ? part : -1, left = L - i;
+    let best = -1, bs = -Infinity;
+    rem.forEach((r, k) => {
+      if (!r) return;
+      const s = (k === prev || k === next ? -500 : 0) + (r >= Math.ceil(left / 2) ? 100 : 0) + (PREF[phaseOf(i, O)][k] ?? 0) + r * 0.3 + Math.random();
+      if (s > bs) { bs = s; best = k; }
+    });
+    if (best < 0) break;
+    seq[i] = best; rem[best]--;
+  }
+  const ov = seq.map((k, i) => ({ b: k, l: i === overs - 1 && inn.balls % 6 ? inn.balls % 6 : 6, br: 0, r: 0, w: 0 }));
+  const WW = [1.1, 1, 1.6], PW = [1, 0.85, 1.35];
+  const wpick = idx => { const w = idx.map(i => WW[phaseOf(i, O)]); let u = Math.random() * w.reduce((a, x) => a + x, 0); for (let j = 0; j < idx.length; j++) { u -= w[j]; if (u <= 0) return idx[j]; } return idx[idx.length - 1]; };
+  used.forEach((b, k) => {
+    const mine = ov.map((o, i) => (o.b === k ? i : -1)).filter(i => i >= 0);
+    if (!mine.length) return;
+    share(b.runs, mine.map(i => PW[phaseOf(i, O)] * ov[i].l * Math.exp(normal() * 0.5))).forEach((r, j) => { ov[mine[j]].br = r; });
+    for (let w = 0; w < b.wkts; w++) ov[wpick(mine)].w++;
+  });
+  share(Math.max(0, otherExtras), ov.map(o => o.l)).forEach((r, i) => { ov[i].r = ov[i].br + r; });
+  for (let w = 0; w < runOuts; w++) ov[wpick(ov.map((_, i) => i))].w++;
+  return ov;
 }
 function simulateFixture(t, f) {
   if (!f.a || !f.b || isPlayed(f)) return false;
   // About one league match in 30 is washed out.
   if (!f.stage && Math.random() < 0.033) { f.nr = true; f.simNR = true; f.manual = null; f.matchId = null; f.so = null; return true; }
   const O = t.overs || 20, Q = O * 6;
-  const rpo = O <= 10 ? 10.5 - (O - 5) * 0.2 : O <= 20 ? 9.5 - (O - 10) * 0.125 : O <= 50 ? 8.25 - (O - 20) * 0.088 : 5.6;
-  const mean = rpo * O;
+  const mean = rpoFor(O) * O;
   const first = Math.random() < 0.5 ? 'a' : 'b', second = first === 'a' ? 'b' : 'a';
   const home = t.grounds?.[f.a] ? 0.15 : 0; // a small edge for the home side (the first team named)
   const str = side => strengthOf(t, f[side]) + (side === 'a' ? home : 0);
@@ -195,37 +237,225 @@ function simCardModal(t, f) {
       ${c.bowl.map(b => `<tr><td><b>${esc(b.name)}</b></td><td class="num">${fmtOvers(b.balls)}</td><td class="num">${b.runs}</td><td class="num"><b>${b.wkts}</b></td><td class="num dim">${nf(b.runs / (b.balls / 6), 2)}</td></tr>`).join('')}</tbody></table></div>`;
   };
   const body = openModal(`${f.a} v ${f.b}`, `<p style="margin:-4px 0 0;font-weight:700">${esc(o?.text?.split(' · ')[0] || '')}${o?.so ? ` · ${esc(o.so === 'a' ? f.a : f.b)} won the super over` : ''}</p>
-    <p class="hint" style="margin:4px 0 0">Simulated result${t.grounds?.[f.a] ? ` at ${esc(t.grounds[f.a])}` : ''}.</p>
+    <p class="hint" style="margin:4px 0 0">Simulated result${(f.venue || t.grounds?.[f.a]) ? ` at ${esc(f.venue || t.grounds[f.a])}` : ''}.${(() => { const pm = matchFigures(t, f, new Map())?.pom; return pm ? ` Player of the Match: ${esc(pm.name)}.` : ''; })()}</p>
     ${order.map(inn).join('')}
     <div class="modal-actions"><button type="button" class="btn" data-x="close">Close</button></div>`, { wide: true });
   $('[data-x="close"]', body).addEventListener('click', () => closeModal());
 }
-// Players' tournament totals: scored matches (from their scorecards) plus simulated ones.
-function leaders(t, linked) {
-  const rec = buildRecords(linked, { includeBase: false });
-  const map = new Map();
+/* ---------- Player figures, phases and awards ----------
+   Every played match (scored in the live scorer or simulated) is read into the same shape: each player's
+   batting, bowling and fielding, and the runs and wickets in each phase of the innings. */
+// One number for how much a player did in a match: runs (more for scoring quickly), wickets (more for
+// bowling tightly) and catches. Picks the Player of the Match and adds up to the Player of the tournament.
+function impactOf(p, O) {
+  const e = rpoFor(O) / 6;
+  let s = 0;
+  if (p.bat) s += p.bat.r + (p.bat.r - p.bat.b * e) * 0.5 + (p.bat.r >= 50 ? 10 : 0) + (p.bat.r >= 100 ? 20 : 0);
+  if (p.bowl) s += p.bowl.w * 25 + (p.bowl.balls * e - p.bowl.r) * 0.6 + (p.bowl.w >= 3 ? 8 : 0) + (p.bowl.w >= 5 ? 15 : 0);
+  return s + p.fd * 8;
+}
+const blankPh = () => [0, 1, 2].map(() => ({ r: 0, b: 0, w: 0, n: 0 }));
+function matchFigures(t, f, byId) {
+  const o = f.a && f.b ? outcome(t, f, byId) : null;
+  if (!o || o.error || o.nr) return null;
+  let O = t.overs || 20;
+  const P = new Map(), ph = {}, bph = new Map();
   const get = (name, team) => {
     const k = nameKey(name);
-    let r = map.get(k);
-    if (!r) { r = { name, teams: new Set(), bat: { inns: 0, runs: 0, balls: 0, f6: 0, hs: 0 }, bowl: { wkts: 0, runs: 0, balls: 0 } }; map.set(k, r); }
-    if (team) r.teams.add(team);
-    return r;
+    if (!k) return null;
+    let p = P.get(k);
+    if (!p) { p = { key: k, name: String(name).trim(), team, bat: null, bowl: null, fd: 0 }; P.set(k, p); }
+    return p;
   };
-  rec.forEach(r => {
-    const x = get(r.name); r.teams.forEach(tm => x.teams.add(tm));
-    x.bat.inns += r.bat.inns; x.bat.runs += r.bat.runs; x.bat.balls += r.bat.balls; x.bat.f6 += r.bat.f6 || 0; x.bat.hs = Math.max(x.bat.hs, r.bat.hs || 0);
-    x.bowl.wkts += r.bowl.wkts; x.bowl.runs += r.bowl.runs; x.bowl.balls += r.bowl.balls;
-  });
-  t.fixtures.forEach(f => {
-    const c = f.manual?.sim && f.manual.card;
-    if (!c) return;
+  const phT = team => ph[team] || (ph[team] = { bat: blankPh(), bowl: blankPh() });
+  const fielding = (b, fldTeam) => {
+    const d = parseDismissal(b);
+    if (d.fielder && ['caught', 'stumped', 'run out'].includes(d.how)) { const q = get(d.fielder, fldTeam); if (q) q.fd++; }
+  };
+  // overs: [{ b: bowler index, r: runs, br: runs off the bowler, w: wickets, l: legal balls }]
+  const addOvers = (bt, ft, overs, nameOf) => {
+    const seen = new Set();
+    overs.forEach((ov, i) => {
+      if (!ov.l && !ov.r) return;
+      const k = phaseOf(i, O);
+      for (const x of [phT(bt).bat[k], phT(ft).bowl[k]]) { x.r += ov.r; x.b += ov.l; x.w += ov.w; if (!seen.has(k)) x.n++; }
+      seen.add(k);
+      const nm = nameOf(ov.b), key = nameKey(nm);
+      if (!key) return;
+      let q = bph.get(key);
+      if (!q) { q = { key, name: nm, team: ft, ph: blankPh() }; bph.set(key, q); }
+      q.ph[k].r += ov.br ?? ov.r; q.ph[k].b += ov.l;
+    });
+  };
+  if (f.manual?.sim && f.manual.card) {
+    const c = f.manual.card;
     ['a', 'b'].forEach(side => {
-      const other = side === 'a' ? 'b' : 'a';
-      c[side]?.bat.forEach(b => { const x = get(b.name, f[side]); x.bat.inns++; x.bat.runs += b.runs; x.bat.balls += b.balls; x.bat.f6 += b.f6; x.bat.hs = Math.max(x.bat.hs, b.runs); });
-      c[side]?.bowl.forEach(b => { const x = get(b.name, f[other]); x.bowl.wkts += b.wkts; x.bowl.runs += b.runs; x.bowl.balls += b.balls; });
+      const other = side === 'a' ? 'b' : 'a', cs = c[side];
+      if (!cs) return;
+      cs.bat.forEach(b => { const p = get(b.name, f[side]); if (p) p.bat = { r: b.runs, b: b.balls, f4: b.f4, f6: b.f6, out: b.how !== 'not out' }; fielding(b, f[other]); });
+      cs.bowl.forEach(b => { const p = get(b.name, f[other]); if (p) p.bowl = { balls: b.balls, r: b.runs, w: b.wkts }; });
+      if (Array.isArray(cs.ov)) addOvers(f[side], f[other], cs.ov, k => cs.bowl[k]?.name);
+    });
+  } else if (o.linked) {
+    const d = o.linked.data;
+    O = d.overs || O;
+    let ai = d.teams.findIndex(x => same(x, f.a));
+    if (ai === -1) { const bi = d.teams.findIndex(x => same(x, f.b)); ai = bi === -1 ? 0 : 1 - bi; }
+    const tn = i => (i === ai ? f.a : f.b);
+    d.inns.slice(0, 2).forEach(inn => {
+      const bt = tn(inn.bat), ft = tn(1 - inn.bat);
+      inn.batters.forEach(b => { const p = get(b.name, bt); if (p) p.bat = { r: b.runs, b: b.balls, f4: b.f4, f6: b.f6, out: !!b.out }; if (b.out) fielding(b, ft); });
+      inn.bowlers.forEach(w => { if (!w.balls && !w.runs) return; const p = get(w.name, ft); if (p) p.bowl = { balls: w.balls, r: w.runs, w: w.wkts }; });
+      if (Array.isArray(inn.overs)) addOvers(bt, ft, inn.overs.map(v => ({ b: v.bowler, r: v.runs, br: v.bowlerRuns, w: v.wkts, l: v.legal })), k => inn.bowlers[k]?.name);
+    });
+    (d.squads || []).forEach((sq, i) => (sq || []).forEach(n => get(String(n).replace(ROLE, ' ').trim(), tn(i))));
+  } else return { o, O, players: [], ph, bph: [], pom: null, won: null }; // a typed-in score has no player figures
+  const players = [...P.values()];
+  players.forEach(p => { p.imp = impactOf(p, O); });
+  const res = decided(t, o);
+  const won = res === 'a' || res === 'b' ? f[res] : null;
+  const pool = players.filter(p => p.bat || p.bowl || p.fd);
+  let pom = f.pom ? pool.find(p => same(p.name, f.pom)) : null;
+  if (!pom) pom = [...pool].sort((x, y) => (won ? (y.team === won) - (x.team === won) : 0) || y.imp - x.imp)[0] || null;
+  return { o, O, players, ph, bph: [...bph.values()], pom, won, chosen: !!(f.pom && pom && same(pom.name, f.pom)) };
+}
+const fxLabel = (t, f) => (f.stage ? STAGE[f.stage] : `Match ${t.fixtures.filter(x => !x.stage).indexOf(f) + 1}`);
+// The whole tournament: each player's totals and match list, the best single performances, and phase totals.
+function tourStats(t, byId) {
+  const players = new Map(), teamPh = {}, bowlPh = new Map(), inns = [], spells = [], byFx = new Map();
+  t.fixtures.forEach(f => {
+    const m = matchFigures(t, f, byId);
+    if (!m) return;
+    byFx.set(f.id, m);
+    m.players.forEach(p => {
+      let x = players.get(p.key);
+      if (!x) { x = { key: p.key, name: p.name, teams: new Set(), m: 0, inns: 0, no: 0, runs: 0, balls: 0, f4: 0, f6: 0, hs: -1, hsNo: false, n50: 0, n100: 0, bb: 0, br: 0, bw: 0, best: null, fd: 0, pom: 0, mvp: 0, games: [] }; players.set(p.key, x); }
+      x.teams.add(p.team); x.m++; x.fd += p.fd; x.mvp += p.imp;
+      const isPom = m.pom && m.pom.key === p.key;
+      if (isPom) x.pom++;
+      const opp = p.team === f.a ? f.b : f.a;
+      x.games.push({ f, opp, bat: p.bat, bowl: p.bowl, fd: p.fd, pom: isPom, won: m.won ? m.won === p.team : null, imp: p.imp });
+      if (p.bat) {
+        const b = p.bat;
+        x.inns++; if (!b.out) x.no++;
+        x.runs += b.r; x.balls += b.b; x.f4 += b.f4 || 0; x.f6 += b.f6 || 0;
+        if (b.r >= 100) x.n100++; else if (b.r >= 50) x.n50++;
+        if (b.r > x.hs || (b.r === x.hs && !b.out)) { x.hs = b.r; x.hsNo = !b.out; }
+        inns.push({ key: p.key, name: p.name, team: p.team, opp, r: b.r, b: b.b, out: b.out, f });
+      }
+      if (p.bowl && p.bowl.balls) {
+        const w = p.bowl;
+        x.bb += w.balls; x.br += w.r; x.bw += w.w;
+        if (!x.best || w.w > x.best.w || (w.w === x.best.w && w.r < x.best.r)) x.best = { w: w.w, r: w.r };
+        spells.push({ key: p.key, name: p.name, team: p.team, opp, w: w.w, r: w.r, balls: w.balls, f });
+      }
+    });
+    Object.entries(m.ph).forEach(([team, v]) => {
+      const T = teamPh[team] || (teamPh[team] = { bat: blankPh(), bowl: blankPh() });
+      ['bat', 'bowl'].forEach(side => v[side].forEach((q, k) => { ['r', 'b', 'w', 'n'].forEach(z => { T[side][k][z] += q[z]; }); }));
+    });
+    m.bph.forEach(q => {
+      let x = bowlPh.get(q.key);
+      if (!x) { x = { key: q.key, name: q.name, teams: new Set(), ph: blankPh() }; bowlPh.set(q.key, x); }
+      x.teams.add(q.team);
+      q.ph.forEach((v, k) => { x.ph[k].r += v.r; x.ph[k].b += v.b; });
     });
   });
-  return [...map.values()];
+  return { players: [...players.values()], teamPh, bowlPh: [...bowlPh.values()], inns, spells, byFx };
+}
+let curStats = null; // from the last render, so each fixture row can show its Player of the Match
+const rr = (r, b) => (b ? nf(r / (b / 6), 2) : '—');
+const plLink = (name, key) => `<button type="button" class="tr-link" data-tr="player" data-key="${esc(key || nameKey(name))}">${esc(name)}</button>`;
+const tmLink = name => `<button type="button" class="tr-link" data-tr="team" data-team="${esc(name)}">${esc(name)}</button>`;
+const figs = w => `${w.w}/${w.r}`;
+const batTxt = b => `${b.r}${b.out ? '' : '*'} (${b.b})`;
+// A tap on a player's name: their tournament, match by match.
+function playerModal(t, key) {
+  const S = tourStats(t, new Map(finishedMatches().map(m => [m.id, m])));
+  const x = S.players.find(p => p.key === key);
+  if (!x) { toast('No figures for that player yet'); return; }
+  const outs = x.inns - x.no;
+  const stat = (l, v) => `<div class="tp-stat"><span>${esc(l)}</span><b>${v}</b></div>`;
+  const body = openModal(x.name, `
+    <p class="hint" style="margin:-6px 0 12px">${[...x.teams].map(esc).join(', ')} · ${plural(x.m, 'match', 'matches')}${x.pom ? ` · ${plural(x.pom, 'Player of the Match award')}` : ''} · ${nf(x.mvp, 0)} tournament points</p>
+    ${x.inns ? `<p class="modal-sub">Batting</p><div class="tp-grid">${stat('Runs', x.runs)}${stat('Innings', x.inns)}${stat('Not out', x.no)}${stat('Highest', `${x.hs}${x.hsNo ? '*' : ''}`)}${stat('Average', outs ? nf(x.runs / outs, 2) : '—')}${stat('Strike rate', x.balls ? nf(x.runs / x.balls * 100, 1) : '—')}${stat('50s / 100s', `${x.n50} / ${x.n100}`)}${stat('4s / 6s', `${x.f4} / ${x.f6}`)}</div>` : ''}
+    ${x.bb ? `<p class="modal-sub" style="margin-top:14px">Bowling</p><div class="tp-grid">${stat('Wickets', x.bw)}${stat('Overs', fmtOvers(x.bb))}${stat('Runs', x.br)}${stat('Best', x.best ? figs(x.best) : '—')}${stat('Average', x.bw ? nf(x.br / x.bw, 2) : '—')}${stat('Economy', rr(x.br, x.bb))}${stat('Strike rate', x.bw ? nf(x.bb / x.bw, 1) : '—')}</div>` : ''}
+    ${x.fd ? `<p class="hint">Fielding: ${plural(x.fd, 'dismissal')} (catches, stumpings and run outs).</p>` : ''}
+    <p class="modal-sub" style="margin-top:14px">Match by match</p>
+    <div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Match</th><th>Against</th><th class="num">Batting</th><th class="num">Bowling</th><th></th></tr></thead><tbody>
+    ${x.games.map(g => `<tr><td class="dim">${esc(fxLabel(t, g.f))}</td><td>${esc(g.opp)}${g.won == null ? '' : g.won ? ' <span class="chip r2" style="font-size:.62rem">Won</span>' : ' <span class="chip r0" style="font-size:.62rem">Lost</span>'}</td><td class="num">${g.bat ? batTxt(g.bat) : '<span class="dim">—</span>'}</td><td class="num">${g.bowl && g.bowl.balls ? `${figs(g.bowl)} <span class="dim">(${fmtOvers(g.bowl.balls)})</span>` : '<span class="dim">—</span>'}</td><td>${g.pom ? '<span class="chip r3" style="font-size:.62rem">Player of the Match</span>' : ''}</td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="modal-actions"><button type="button" class="btn" data-x="close">Close</button></div>`, { wide: true });
+  $('[data-x="close"]', body).addEventListener('click', () => closeModal());
+}
+// A tap on a team's name: results, form, head-to-head, top players and phase figures.
+function teamModal(t, team) {
+  const byId = new Map(finishedMatches().map(m => [m.id, m]));
+  const S = tourStats(t, byId), rows = table(t), pos = rows.findIndex(r => r.team === team), r = rows[pos];
+  if (!r) return;
+  const mine = t.fixtures.filter(f => f.a === team || f.b === team);
+  const res = f => {
+    const o = f.a && f.b ? outcome(t, f, byId) : null;
+    if (!o || o.error) return null;
+    const d = decided(t, o), me = f.a === team ? 'a' : 'b';
+    return d === 'nr' ? 'NR' : d === 'tie' ? 'T' : d === me ? 'W' : 'L';
+  };
+  const chip = v => `<span class="chip ${v === 'W' ? 'r2' : v === 'L' ? 'r0' : 'r1'}" style="font-size:.65rem">${v}</span>`;
+  const played = mine.map(f => ({ f, v: res(f) })).filter(x => x.v);
+  const next = mine.filter(f => !res(f) && f.a && f.b).slice(0, 3);
+  const h2h = new Map();
+  played.forEach(({ f, v }) => {
+    const opp = f.a === team ? f.b : f.a;
+    const h = h2h.get(opp) || { p: 0, W: 0, L: 0, T: 0, NR: 0 };
+    h.p++; h[v]++; h2h.set(opp, h);
+  });
+  const mineP = S.players.filter(p => p.teams.has(team));
+  const topR = mineP.filter(p => p.inns).sort((a, b) => b.runs - a.runs).slice(0, 3);
+  const topW = mineP.filter(p => p.bb).sort((a, b) => b.bw - a.bw || a.br - b.br).slice(0, 3);
+  const ph = S.teamPh[team];
+  const O = t.overs || 20;
+  const raw = squads()[team.toLowerCase()];
+  const body = openModal(team, `
+    <p class="hint" style="margin:-6px 0 10px">${ordN(pos + 1)} · ${r.pts} pts · won ${r.w}, lost ${r.l}${r.tie ? `, tied ${r.tie}` : ''}${r.nr ? `, ${r.nr} no result` : ''} · NRR ${signed(r.nrr)}${t.grounds?.[team] ? ` · home: ${esc(t.grounds[team])}` : ''}</p>
+    <p class="modal-sub">Form${played.length > 5 ? ' (last 5)' : ''}</p>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">${played.length ? played.slice(-5).map(x => chip(x.v)).join('') : '<span class="hint" style="margin:0">No results yet.</span>'}</div>
+    ${played.length ? `<p class="modal-sub" style="margin-top:14px">Results</p><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><tbody>${played.map(({ f, v }) => `<tr><td class="dim">${esc(fxLabel(t, f))}</td><td>${chip(v)} v ${esc(f.a === team ? f.b : f.a)}</td><td class="dim" style="font-size:.8rem">${esc(outcome(t, f, byId)?.text || '')}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${next.length ? `<p class="hint">Next: ${next.map(f => `${esc(fxLabel(t, f))} v ${esc(f.a === team ? f.b : f.a)}${f.date ? ` (${esc(dateTxt(f.date))})` : ''}`).join(' · ')}</p>` : ''}
+    ${h2h.size ? `<p class="modal-sub" style="margin-top:14px">Head-to-head</p><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Against</th><th class="num">P</th><th class="num">W</th><th class="num">L</th><th class="num">T</th><th class="num">NR</th></tr></thead><tbody>${[...h2h].map(([opp, h]) => `<tr><td>${esc(opp)}</td><td class="num">${h.p}</td><td class="num">${h.W}</td><td class="num">${h.L}</td><td class="num">${h.T}</td><td class="num">${h.NR}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${topR.length || topW.length ? `<div class="grid-2" style="margin-top:14px">
+      <div><p class="modal-sub">Top run-scorers</p>${topR.map(p => `<div class="tp-line">${plLink(p.name, p.key)}<b>${p.runs}</b></div>`).join('') || '<p class="hint">—</p>'}</div>
+      <div><p class="modal-sub">Top wicket-takers</p>${topW.map(p => `<div class="tp-line">${plLink(p.name, p.key)}<b>${p.bw}</b></div>`).join('') || '<p class="hint">—</p>'}</div></div>` : ''}
+    ${ph ? `<p class="modal-sub" style="margin-top:14px">By phase</p><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th></th>${PHASES.map((n, k) => `<th class="num">${n}<div class="dim" style="font-weight:400;font-size:.72rem">overs ${phaseOvers(O)[k]}</div></th>`).join('')}</tr></thead><tbody>
+      <tr><td>Batting: run rate</td>${ph.bat.map(q => `<td class="num">${rr(q.r, q.b)}</td>`).join('')}</tr>
+      <tr><td>Wickets lost per innings</td>${ph.bat.map(q => `<td class="num">${q.n ? nf(q.w / q.n, 1) : '—'}</td>`).join('')}</tr>
+      <tr><td>Bowling: run rate conceded</td>${ph.bowl.map(q => `<td class="num">${rr(q.r, q.b)}</td>`).join('')}</tr>
+      <tr><td>Wickets taken per innings</td>${ph.bowl.map(q => `<td class="num">${q.n ? nf(q.w / q.n, 1) : '—'}</td>`).join('')}</tr></tbody></table></div>` : ''}
+    <p class="modal-sub" style="margin-top:14px">Squad</p>
+    <p class="hint" style="margin:0">${Array.isArray(raw) && raw.length ? raw.map(esc).join(', ') : 'No squad saved yet. Add one with “Squads”.'}</p>
+    <div class="modal-actions"><button type="button" class="btn" data-x="close">Close</button></div>`, { wide: true });
+  body.addEventListener('click', e => {
+    const p = e.target.closest('[data-tr="player"]');
+    if (p) { playerModal(t, p.dataset.key); return; }
+    if (e.target.closest('[data-x="close"]')) closeModal();
+  });
+}
+// Choose the Player of the Match, or go back to the automatic pick.
+function pomForm(t, f) {
+  const m = matchFigures(t, f, new Map(finishedMatches().map(x => [x.id, x])));
+  const pool = (m?.players || []).filter(p => p.bat || p.bowl || p.fd).sort((a, b) => b.imp - a.imp);
+  if (!pool.length) { toast('Player of the Match needs a scorecard: score the match live or simulate it.'); return; }
+  const auto = [...pool].sort((x, y) => (m.won ? (y.team === m.won) - (x.team === m.won) : 0) || y.imp - x.imp)[0];
+  const line = p => [p.bat && `${batTxt(p.bat)}`, p.bowl && p.bowl.balls && `${figs(p.bowl)}`].filter(Boolean).join(', ');
+  const body = openModal(`Player of the Match: ${f.a} v ${f.b}`, `
+    <div class="field"><div class="lab"><label for="pom-s">Player</label></div><select id="pom-s"><option value="">Automatic: ${esc(auto.name)}</option>${pool.map(p => `<option value="${esc(p.name)}"${f.pom && same(f.pom, p.name) ? ' selected' : ''}>${esc(p.name)} (${esc(p.team)}) ${esc(line(p))}</option>`).join('')}</select></div>
+    <p class="hint">The automatic pick is the player with the biggest impact on the winning side: runs, with extra for scoring quickly, wickets, with extra for bowling tightly, and catches.</p>
+    <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Save</button></div>`);
+  body.addEventListener('click', e => {
+    const x = e.target.closest('[data-x]');
+    if (!x) return;
+    if (x.dataset.x === 'ok') { const v = $('#pom-s', body).value; if (v) f.pom = v; else delete f.pom; update(t); RENDER.tournament(); toast(`Player of the Match: ${v || auto.name}`); }
+    closeModal();
+  });
 }
 // Orders the matches still to play so each team gets the longest possible gap between games.
 function spreadSchedule(t) {
@@ -271,7 +501,159 @@ function squadsForm(t) {
     closeModal(); RENDER.tournament(); toast('Squads saved');
   });
 }
+if (!document.getElementById('tr-css')) {
+  const st = document.createElement('style');
+  st.id = 'tr-css';
+  st.textContent = `.tr-link{all:unset;cursor:pointer;color:inherit;font-weight:inherit;border-bottom:1px dotted color-mix(in srgb,currentColor 45%,transparent)}.tr-link:hover{color:var(--accent-text)}.tr-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+.fx-pom{font-size:.8rem;color:var(--fg-2);margin-top:2px}.tp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px}.tp-stat{border:1px solid var(--line);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:2px}.tp-stat span{font-size:.72rem;color:var(--fg-2)}.tp-stat b{font-size:1.05rem}
+.tp-line{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:6px 0;border-top:1px solid var(--line)}.tp-line:first-of-type{border-top:0}`;
+  document.head.appendChild(st);
+}
 const busy = (t, f) => live && live.tournament && live.tournament.tid === t.id && live.tournament.fid === f.id && live.status !== 'done';
+
+/* ---------- Odds, net run rate targets, rescheduling ---------- */
+// Plays the rest of the league out many times. Each match goes to the side with the better record so far
+// (wins, then net run rate) more often than not; level teams are split by net run rate with some luck.
+function qualOdds(t, rows, N, byId, runs = 3000) {
+  const n = rows.length, idx = new Map(rows.map((r, k) => [r.team, k]));
+  const rem = t.fixtures.filter(f => !f.stage && idx.has(f.a) && idx.has(f.b) && f.a !== f.b && !outcome(t, f, byId));
+  if (!rem.length || !N || N >= n) return null;
+  const pts = t.pts || { w: 2, t: 1, nr: 1, l: 0 };
+  const rating = rows.map(r => Math.log((r.w + 0.5 * r.tie + 1) / (r.l + 0.5 * r.tie + 1)) + (r.nrr ?? 0) * 0.3);
+  const ends = rem.map(f => { const A = idx.get(f.a), B = idx.get(f.b); return [A, B, 1 / (1 + Math.exp(-(rating[A] - rating[B]) * 0.8))]; });
+  const inN = Array(n).fill(0), in2 = Array(n).fill(0), P = Array(n), key = Array(n), order = rows.map((_, k) => k);
+  for (let run = 0; run < runs; run++) {
+    for (let k = 0; k < n; k++) P[k] = rows[k].pts;
+    for (const [A, B, p] of ends) {
+      if (Math.random() < 0.02) { P[A] += pts.nr; P[B] += pts.nr; continue; }
+      const w = Math.random() < p ? A : B;
+      P[w] += pts.w; P[w === A ? B : A] += pts.l || 0;
+    }
+    for (let k = 0; k < n; k++) key[k] = P[k] * 1000 + (rows[k].nrr ?? 0) + normal() * 0.35;
+    order.sort((x, y) => key[y] - key[x]);
+    for (let j = 0; j < N; j++) inN[order[j]]++;
+    if (N > 2) { in2[order[0]]++; in2[order[1]]++; }
+  }
+  return { top: inN.map(v => v / runs), top2: N > 2 ? in2.map(v => v / runs) : null };
+}
+const pct = (v, sure, never) => (sure ? '100%' : never ? '0%' : v >= 0.995 ? '>99%' : v < 0.005 ? '<1%' : `${Math.round(v * 100)}%`);
+
+// What a team needs in its next match to finish above another on net run rate.
+function nrrCalcForm(t) {
+  const byId = new Map(finishedMatches().map(m => [m.id, m]));
+  const rows = table(t);
+  if (rows.length < 2) { toast('Add at least two teams first'); return; }
+  const N = qualifyN(t) || 2;
+  const O = t.overs || 20, Q = O * 6;
+  const def = rows[Math.min(N, rows.length - 1)].team, above = rows[Math.max(0, Math.min(N, rows.length - 1) - 1)].team;
+  const nextOpp = team => { const f = t.fixtures.find(x => !x.stage && (x.a === team || x.b === team) && !outcome(t, x, byId) && x.a && x.b); return f ? (f.a === team ? f.b : f.a) : null; };
+  const opt = (sel, skip) => rows.filter(r => r.team !== skip).map(r => `<option${r.team === sel ? ' selected' : ''}>${esc(r.team)}</option>`).join('');
+  const body = openModal('Net run rate calculator', `
+    <div class="fields">
+      <div class="field"><div class="lab"><label for="nc-x">Team</label></div><select id="nc-x">${opt(def)}</select></div>
+      <div class="field"><div class="lab"><label for="nc-y">Wants to finish above</label></div><select id="nc-y">${opt(above)}</select></div>
+      <div class="field"><div class="lab"><label for="nc-o">Next match against</label></div><select id="nc-o"></select></div>
+      <div class="field"><div class="lab"><label for="nc-s">First-innings score</label></div><input id="nc-s" type="text" inputmode="numeric" autocomplete="off" value="${Math.round(rpoFor(O) * O)}"></div>
+    </div>
+    <div id="nc-out" style="margin-top:14px"></div>
+    <p class="hint">Assumes ${O} overs a side and that the other team's net run rate stays as it is, unless the two of them are playing each other, when both change. A chase is taken as reaching the target exactly.</p>
+    <div class="modal-actions"><button type="button" class="btn" data-x="close">Close</button></div>`, { wide: true });
+  const fillOpp = () => { const X = $('#nc-x', body).value, cur = $('#nc-o', body).value, nx = nextOpp(X); $('#nc-o', body).innerHTML = opt(cur && cur !== X ? cur : nx || rows.find(r => r.team !== X).team, X); };
+  const calc = () => {
+    const X = rows.find(r => r.team === $('#nc-x', body).value), Y = rows.find(r => r.team === $('#nc-y', body).value), opp = $('#nc-o', body).value;
+    const out = $('#nc-out', body), S = Number($('#nc-s', body).value);
+    if (X === Y) { out.innerHTML = '<p class="err-text">Pick two different teams.</p>'; return; }
+    if (!Number.isInteger(S) || S < 1 || S > 999) { out.innerHTML = '<p class="err-text">Enter a first-innings score, like 180.</p>'; return; }
+    const vs = Y.team === opp;
+    const nrr = (r, rf, bf, ra, bb) => nrrOf({ RF: r.rf + rf, OF: r.bf + bf, RA: r.ra + ra, OB: r.bb + bb });
+    // Batting first: the most the opposition can make.
+    let R = null;
+    for (let x = S - 1; x >= 0; x--) { const a = nrr(X, S, Q, x, Q), b = vs ? nrr(Y, x, Q, S, Q) : (Y.nrr ?? 0); if (a > b) { R = x; break; } }
+    // Chasing S + 1: the most balls it can take.
+    let B = null;
+    for (let bb = Q; bb >= 1; bb--) { const a = nrr(X, S + 1, bb, S, Q), b = vs ? nrr(Y, S, Q, S + 1, bb) : (Y.nrr ?? 0); if (a > b) { B = bb; break; } }
+    const W = (t.pts || {}).w ?? 2;
+    const xw = X.pts + W, yLo = Y.pts, yHi = Y.pts + (vs ? 0 : W);
+    const ptsNote = xw < yLo ? `Even with a win ${X.team} (${xw} pts) stays below ${Y.team} (${Y.pts} pts) on points, so this is net run rate only.`
+        : xw > yHi ? `A win takes ${X.team} above ${Y.team} on points${vs ? '' : ' whatever they do'}, so net run rate won't decide it.`
+            : `A win puts ${X.team} on ${xw} pts, ${vs || xw === yLo ? `level with ${Y.team}${vs ? '' : ` if they don't pick up points`}` : `level with ${Y.team} if they also win`}, and then net run rate decides it.`;
+    out.innerHTML = `<p style="margin:0 0 6px">Now: ${esc(X.team)} ${signed(X.nrr)}, ${esc(Y.team)} ${signed(Y.nrr)}.</p>
+      <div class="tp-line"><span>Batting first and making ${S}</span><b>${R == null ? 'Not possible' : `Win by ${S - R}+ runs (keep ${esc(opp)} to ${R} or fewer)`}</b></div>
+      <div class="tp-line"><span>Chasing ${S + 1}</span><b>${B == null ? 'Not possible' : `Win in ${fmtOvers(B)} overs or fewer`}</b></div>
+      <p class="hint">${esc(ptsNote)}</p>`;
+  };
+  fillOpp(); calc();
+  body.addEventListener('change', e => { if (e.target.id === 'nc-x') fillOpp(); calc(); });
+  body.addEventListener('input', calc);
+  $('[data-x="close"]', body).addEventListener('click', () => closeModal());
+}
+
+// Move a match: new date or ground, a different place in the order, home and away swapped, or postponed.
+function fxEditForm(t, f) {
+  const league = t.fixtures.filter(x => !x.stage), ko = t.fixtures.filter(x => x.stage);
+  const pos = league.indexOf(f) + 1, played = isPlayed(f), lockTeams = played || busy(t, f) || !!f.stage;
+  const body = openModal(`Edit fixture: ${f.a || 'TBC'} v ${f.b || 'TBC'}`, `
+    <div class="fields">
+      <div class="field"><div class="lab"><label for="fe-d">Date</label></div><input id="fe-d" type="date" value="${esc(f.date || '')}"></div>
+      <div class="field"><div class="lab"><label for="fe-g">Ground</label></div><input id="fe-g" type="text" maxlength="80" autocomplete="off" value="${esc(f.venue || '')}" placeholder="${esc(t.grounds?.[f.a] || 'Home ground')}"></div>
+      ${f.stage ? '' : `<div class="field"><div class="lab"><label for="fe-p">Match number</label></div><input id="fe-p" type="text" inputmode="numeric" autocomplete="off" value="${pos}"></div>`}
+    </div>
+    ${lockTeams ? '' : `<label class="check" style="margin-top:10px"><input type="checkbox" id="fe-sw"> Swap home and away (${esc(f.b)} at home)</label>`}
+    <p class="hint">Leave the ground empty to use the home team's ground. When every league match has a date, changing a date puts the match back in date order; a new match number moves it there instead.</p>
+    <p class="err-text" id="fe-err"></p>
+    <div class="modal-actions">${f.stage || played ? '' : '<button type="button" class="btn ghost" data-x="post">Postpone to the end</button>'}<button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Save</button></div>`);
+  body.addEventListener('click', e => {
+    const x = e.target.closest('[data-x]');
+    if (!x) return;
+    if (x.dataset.x === 'cancel') { closeModal(); return; }
+    const rest = league.filter(y => y !== f);
+    if (x.dataset.x === 'post') {
+      delete f.date; f.postponed = true;
+      t.fixtures = [...rest, f, ...ko];
+      update(t); closeModal(); RENDER.tournament(); toast(`Postponed: now match ${rest.length + 1}. Give it a new date with Edit.`);
+      return;
+    }
+    const err = $('#fe-err', body), d = $('#fe-d', body).value.trim(), g = $('#fe-g', body).value.trim().replace(/\s+/g, ' ');
+    if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d)) { err.textContent = 'Pick a date, or leave it empty.'; return; }
+    let np = pos;
+    if (!f.stage) {
+      np = Number($('#fe-p', body).value.trim());
+      if (!Number.isInteger(np) || np < 1 || np > league.length) { err.textContent = `Match number must be from 1 to ${league.length}.`; return; }
+    }
+    const dateChanged = (f.date || '') !== d;
+    if (d) f.date = d; else delete f.date;
+    if (g) f.venue = g; else delete f.venue;
+    if (dateChanged && d) delete f.postponed;
+    if ($('#fe-sw', body)?.checked) [f.a, f.b] = [f.b, f.a];
+    if (!f.stage) {
+      let L = rest.slice();
+      if (np !== pos) L.splice(np - 1, 0, f);
+      else {
+        L.splice(pos - 1, 0, f);
+        if (dateChanged && L.every(y => y.date)) L = L.map((y, k) => [y, k]).sort((p, q) => p[0].date.localeCompare(q[0].date) || p[1] - q[1]).map(p => p[0]);
+      }
+      t.fixtures = [...L, ...ko];
+    }
+    update(t); closeModal(); RENDER.tournament(); toast('Fixture updated');
+  });
+}
+
+// After a knockout result changes, later knockout matches that were played with the old teams start again.
+function reflowKO(t) {
+  const byId = new Map(finishedMatches().map(m => [m.id, m]));
+  let reset = 0;
+  KO_ORDER.forEach(s => {
+    const f = t.fixtures.find(x => x.stage === s && Array.isArray(x.from));
+    if (!f || !isPlayed(f)) return;
+    const [a, b] = f.from.map(r => fromRef(t, r, byId));
+    if (f.a === a && f.b === b) return;
+    f.nr = false; f.simNR = false; f.manual = null; f.matchId = null; f.so = null; delete f.pom;
+    reset++;
+  });
+  syncFinal(t, byId);
+  return reset;
+}
+const resetMsg = n => (n ? ` ${plural(n, 'later knockout match was', 'later knockout matches were')} reset, because the teams changed.` : '');
 
 /* ---------- Render ---------- */
 const dateTxt = d => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || ''); return m ? `${Number(m[3])} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(m[2]) - 1]}` : ''; };
@@ -287,7 +669,9 @@ function fxRow(t, f, label, byId, caption = '') {
     const kw = f.stage && f.stage !== 'F' ? koWinner(t, f, byId) : null;
     const through = kw && kw.how && kw.team && !o.so ? ` · ${esc(kw.team)} ${esc(kw.how)}` : '';
     status = `<span class="${o.nr ? 'dim' : ''}">${esc(o.text || '')}${f.simNR ? ' (washed out)' : ''}${soTxt}${through}</span>${isSim(f) ? ' <span class="chip r1" style="font-size:.65rem">Simulated</span>' : ''}`;
-    actions = `${f.manual?.card ? `<button type="button" class="btn ghost sm" data-tr="simcard" data-f="${f.id}">Scorecard</button>` : ''}${tie ? `<button type="button" class="btn ghost sm" data-tr="so" data-f="${f.id}">${o.so ? 'Change super over' : 'Super over winner'}</button>` : ''}${o.linked ? `<button type="button" class="btn ghost sm" data-tr="card" data-f="${f.id}">Scorecard</button>` : ''}<button type="button" class="btn ghost sm" data-tr="clear" data-f="${f.id}">Clear result</button>`;
+    const pm = curStats?.byFx.get(f.id)?.pom;
+    if (pm) status += `<div class="fx-pom">Player of the Match: ${plLink(pm.name, pm.key)}</div>`;
+    actions = `${f.manual?.card ? `<button type="button" class="btn ghost sm" data-tr="simcard" data-f="${f.id}">Scorecard</button>` : ''}${pm ? `<button type="button" class="btn ghost sm" data-tr="pom" data-f="${f.id}">Change Player of the Match</button>` : ''}${f.manual && !f.manual.sim ? `<button type="button" class="btn ghost sm" data-tr="manual" data-f="${f.id}">Edit result</button>` : ''}${isSim(f) ? `<button type="button" class="btn ghost sm" data-tr="resim" data-f="${f.id}">Simulate again</button><button type="button" class="btn ghost sm" data-tr="manual" data-f="${f.id}">Edit result</button>` : ''}${tie ? `<button type="button" class="btn ghost sm" data-tr="so" data-f="${f.id}">${o.so ? 'Change super over' : 'Super over winner'}</button>` : ''}${o.linked ? `<button type="button" class="btn ghost sm" data-tr="card" data-f="${f.id}">Scorecard</button>` : ''}<button type="button" class="btn ghost sm" data-tr="clear" data-f="${f.id}">Clear result</button>`;
   } else {
     status = pending ? '<span class="badge live" style="font-size:.65rem">Being scored</span>' : o?.error ? `<span class="neg">${esc(o.error)}</span>` : '<span class="dim">Not played yet</span>';
     actions = `<button type="button" class="btn sm" data-tr="score" data-f="${f.id}">${pending ? 'Open scorer' : 'Score live'}</button>
@@ -296,8 +680,9 @@ function fxRow(t, f, label, byId, caption = '') {
       <button type="button" class="btn ghost sm" data-tr="nr" data-f="${f.id}">No result</button>
       ${pending ? '' : `<button type="button" class="btn ghost sm" data-tr="sim" data-f="${f.id}">Simulate</button>`}`;
   }
+  if (known || !f.stage) actions += `<button type="button" class="btn ghost sm" data-tr="fxedit" data-f="${f.id}">${isPlayed(f) ? 'Date and ground' : 'Reschedule'}</button>`;
   const del = f.stage ? '' : `<button type="button" class="row-del" data-tr="remove" data-f="${f.id}" aria-label="Remove fixture"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
-  return `<div class="fx-row"><div class="fx-main"><span class="fx-no${label.length > 2 ? ' wide' : ''}">${esc(label)}</span><div>${(() => { const c = [caption, dateTxt(f.date), (f.venue || t.grounds?.[f.a]) && `at ${f.venue || t.grounds[f.a]}`].filter(Boolean).join(' · '); return c ? `<div class="fx-cap">${esc(c)}</div>` : ''; })()}<div class="fx-teams">${esc(f.a || 'TBC')} <span class="dim">v</span> ${esc(f.b || 'TBC')}</div><div class="fx-status">${status}</div></div></div>
+  return `<div class="fx-row"><div class="fx-main"><span class="fx-no${label.length > 2 ? ' wide' : ''}">${esc(label)}</span><div>${(() => { const c = [caption, f.postponed && !isPlayed(f) ? 'Postponed' : '', dateTxt(f.date), (f.venue || t.grounds?.[f.a]) && `at ${f.venue || t.grounds[f.a]}`].filter(Boolean).join(' · '); return c ? `<div class="fx-cap">${esc(c)}</div>` : ''; })()}<div class="fx-teams">${esc(f.a || 'TBC')} <span class="dim">v</span> ${esc(f.b || 'TBC')}</div><div class="fx-status">${status}</div></div></div>
     <div class="fx-acts">${actions}${del}</div></div>`;
 }
 
@@ -305,6 +690,8 @@ function qualCard(t, N) {
   const league = t.fixtures.filter(f => !f.stage);
   if (!N || N >= t.teams.length || !league.length) return '';
   const q = qualification(t, finishedMatches(), N);
+  const trows = table(t), od = qualOdds(t, trows, N, new Map(finishedMatches().map(m => [m.id, m])));
+  const oi = new Map(trows.map((r, k) => [r.team, k]));
   const tb = TIEBREAKS[t.tiebreak] ? t.tiebreak : 'nrr';
   const tbName = { nrr: 'net run rate', wins: 'the number of wins', h2h: 'head-to-head' }[tb];
   const rows = q.rows.map(r => {
@@ -325,13 +712,15 @@ function qualCard(t, N) {
       if (!r.anyIn) parts.push(`At best they finish level on points, so ${tbName} would decide.`);
       text = parts.join(' ');
     }
-    return `<tr><td class="dim">${r.pos}</td><td class="q-team"><div class="q-head"><b>${esc(r.team)}</b>${chip}</div><div class="q-need">${esc(text)}</div></td><td class="num">${r.pts}</td><td class="num">${r.left}</td></tr>`;
+    const k = oi.get(r.team);
+    const odds = od ? `<td class="num"><b>${pct(od.top[k], r.inAll, r.outAll)}</b></td>${od.top2 ? `<td class="num dim">${pct(od.top2[k], false, r.outAll)}</td>` : ''}` : '';
+    return `<tr><td class="dim">${r.pos}</td><td class="q-team"><div class="q-head"><b>${tmLink(r.team)}</b>${chip}</div><div class="q-need">${esc(text)}</div></td><td class="num">${r.pts}</td><td class="num">${r.left}</td>${odds}</tr>`;
   }).join('');
   return `<div class="card">
     <div class="sc-head" style="margin-bottom:12px"><h2 class="card-title" style="margin:0">Qualification</h2>
       <label class="check" style="gap:8px">Top <select id="tr-q" class="select" aria-label="Teams that go through">${Array.from({ length: t.teams.length - 1 }, (_, k) => k + 1).map(k => `<option${k === N ? ' selected' : ''}>${k}</option>`).join('')}</select> go through</label></div>
-    <div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>#</th><th>Team and what they need</th><th class="num">Pts</th><th class="num">Left</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <p class="hint">${q.remaining ? `Plays out the ${plural(q.remaining, 'remaining league match', 'remaining league matches')} every possible way, each won by one side (ties and no results aren't modelled).` : 'The league is complete.'} Teams level on points at the cut-off are separated by ${tbName}, which these scenarios can't predict${q.exact ? '' : '. With this many matches left, this is a points-only estimate'}.</p>
+    <div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>#</th><th>Team and what they need</th><th class="num">Pts</th><th class="num">Left</th>${od ? `<th class="num">Top ${N}</th>${od.top2 ? '<th class="num">Top 2</th>' : ''}` : ''}</tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="hint">${q.remaining ? `Plays out the ${plural(q.remaining, 'remaining league match', 'remaining league matches')} every possible way, each won by one side (ties and no results aren't modelled).` : 'The league is complete.'} Teams level on points at the cut-off are separated by ${tbName}, which these scenarios can't predict${q.exact ? '' : '. With this many matches left, this is a points-only estimate'}.${od ? ` The chances come from playing the rest of the league out 3,000 times: the side with the better record so far wins more often, and teams level on points are split by net run rate with some luck.${od.top2 ? ' Top 2 matters in the IPL format, where 1st and 2nd get two chances to reach the final.' : ''}` : ''}</p>
   </div>`;
 }
 
@@ -357,6 +746,28 @@ function koCard(t, ko, byId) {
   </div>`;
 }
 
+// A leaderboard card. rows have .name/.key (players) and optionally .team or .teams.
+function board(title, rows, val, sub, note = '') {
+  const teamOf = r => (r.teams ? [...r.teams].join(', ') : r.team || '');
+  return `<div class="card"><h2 class="card-title">${esc(title)}</h2>${rows.length ? `<table class="tbl"><tbody>${rows.map((r, k) => `<tr><td class="dim">${k + 1}</td><td>${plLink(r.name, r.key)}<div class="dim" style="font-size:.78rem">${esc(teamOf(r))}</div></td><td class="num"><b>${val(r)}</b></td><td class="num dim" style="font-size:.8rem">${sub(r)}</td></tr>`).join('')}</tbody></table>${note ? `<p class="hint" style="margin-bottom:0">${esc(note)}</p>` : ''}` : '<p class="hint" style="margin:0">Appears once a match is scored or simulated.</p>'}</div>`;
+}
+// Run rates and wickets in the powerplay, middle and death overs, by team, and the best bowlers in each.
+function phaseCard(t, S) {
+  const teams = t.teams.filter(n => S.teamPh[n]);
+  if (!teams.length) return '';
+  const O = t.overs || 20, ov = phaseOvers(O), minB = O <= 20 ? 12 : 30;
+  const head = `<tr><th>Team</th>${PHASES.map((n, k) => `<th class="num">${n}<div class="dim" style="font-weight:400;font-size:.72rem">overs ${ov[k]}</div></th>`).join('')}</tr>`;
+  const cell = q => `<td class="num">${rr(q.r, q.b)}<div class="dim" style="font-size:.72rem">${q.n ? `${nf(q.w / q.n, 1)} wkts/inns` : ''}</div></td>`;
+  const tbl = side => `<div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead>${head}</thead><tbody>${teams.map(n => `<tr><td>${tmLink(n)}</td>${S.teamPh[n][side].map(cell).join('')}</tr>`).join('')}</tbody></table></div>`;
+  const bestIn = k => S.bowlPh.filter(x => x.ph[k].b >= minB).sort((a, b) => a.ph[k].r / a.ph[k].b - b.ph[k].r / b.ph[k].b).slice(0, 5);
+  const mini = (k, label) => { const L = bestIn(k); return `<div><p class="modal-sub">${label}</p>${L.length ? L.map(x => `<div class="tp-line">${plLink(x.name, x.key)}<span><b>${rr(x.ph[k].r, x.ph[k].b)}</b> <span class="dim">econ, ${fmtOvers(x.ph[k].b)} ov</span></span></div>`).join('') : `<p class="hint" style="margin:0">Nobody has bowled ${minB / 6} overs here yet.</p>`}</div>`; };
+  return `<div class="card"><h2 class="card-title">Phases of the innings</h2>
+    <p class="modal-sub">Batting: run rate, wickets lost</p>${tbl('bat')}
+    <p class="modal-sub" style="margin-top:14px">Bowling: run rate conceded, wickets taken</p>${tbl('bowl')}
+    <div class="grid-2" style="margin-top:14px">${mini(0, 'Best powerplay bowlers')}${mini(2, 'Best death bowlers')}</div>
+    <p class="hint">From matches scored live and simulated ones${t.fixtures.some(f => f.manual && !f.manual.sim) ? ' (typed-in scores have no over-by-over detail)' : ''}. Bowlers need ${minB / 6} overs in a phase to be listed.</p></div>`;
+}
+
 RENDER.tournament = function renderTournament() {
   const ts = list();
   const t = active();
@@ -378,13 +789,20 @@ RENDER.tournament = function renderTournament() {
   const rows = table(t);
   const league = t.fixtures.filter(f => !f.stage), ko = t.fixtures.filter(f => f.stage);
   const played = league.filter(f => { const o = outcome(t, f, byId); return o && !o.error; }).length;
-  const linked = t.fixtures.map(f => f.matchId && byId.get(f.matchId)).filter(Boolean);
-  const lead = leaders(t, linked);
-  const top = (fn, n = 5) => lead.filter(fn.ok).sort(fn.sort).slice(0, n);
-  const bats = top({ ok: r => r.bat.inns > 0, sort: (a, b) => b.bat.runs - a.bat.runs || (a.bat.balls - b.bat.balls) });
-  const bowls = top({ ok: r => r.bowl.wkts > 0, sort: (a, b) => b.bowl.wkts - a.bowl.wkts || a.bowl.runs - b.bowl.runs });
-  const six = top({ ok: r => r.bat.f6 > 0, sort: (a, b) => b.bat.f6 - a.bat.f6 || b.bat.runs - a.bat.runs });
-  const hs = top({ ok: r => r.bat.inns > 0, sort: (a, b) => b.bat.hs - a.bat.hs });
+  const S = curStats = tourStats(t, byId);
+  const O = t.overs || 20;
+  const lead = S.players;
+  const top = (ok, sort, n = 5) => lead.filter(ok).sort(sort).slice(0, n);
+  const bats = top(r => r.inns > 0, (a, b) => b.runs - a.runs || a.balls - b.balls);
+  const bowls = top(r => r.bw > 0, (a, b) => b.bw - a.bw || a.br - b.br);
+  const six = top(r => r.f6 > 0, (a, b) => b.f6 - a.f6 || b.runs - a.runs);
+  const minB = Math.min(100, Math.max(30, 3 * O));
+  const srs = top(r => r.balls >= minB, (a, b) => b.runs / b.balls - a.runs / a.balls);
+  const mvp = top(r => r.mvp > 0, (a, b) => b.mvp - a.mvp || b.pom - a.pom);
+  const hs = S.inns.slice().sort((a, b) => b.r - a.r || a.b - b.b).slice(0, 5);
+  // Balls to reach fifty, estimated from the innings' strike rate (simulated cards don't record every ball).
+  const fast = S.inns.filter(x => x.r >= 50 && x.b).map(x => ({ ...x, to50: Math.max(9, Math.ceil(50 * x.b / x.r)) })).sort((a, b) => a.to50 - b.to50 || b.r - a.r).slice(0, 5);
+  const bestB = S.spells.filter(x => x.w > 0).sort((a, b) => b.w - a.w || a.r - b.r || a.balls - b.balls).slice(0, 5);
   const fxs = league.map((f, k) => fxRow(t, f, String(k + 1), byId)).join('');
   const N = qualifyN(t);
   const leagueLeft = league.filter(f => f.a && f.b && !isPlayed(f) && !busy(t, f)).length;
@@ -392,11 +810,11 @@ RENDER.tournament = function renderTournament() {
   const tbTxt = TIEBREAKS[t.tiebreak] || TIEBREAKS.nrr;
   main.innerHTML = `
     <div class="card">
-      <div class="sc-head" style="margin-bottom:12px"><h2 class="card-title" style="margin:0">Points table</h2><span class="hint" style="margin:0">${plural(played, 'result')} of ${plural(league.length, 'fixture')} · ${t.overs ? `${t.overs} overs a side` : 'no fixed overs'} · Win ${t.pts.w}, tie ${t.pts.t}, no result ${t.pts.nr}</span></div>
+      <div class="sc-head" style="margin-bottom:12px"><h2 class="card-title" style="margin:0">Points table</h2><button type="button" class="btn ghost sm" data-tr="nrrcalc">NRR calculator</button><span class="hint" style="margin:0;flex-basis:100%">${plural(played, 'result')} of ${plural(league.length, 'fixture')} · ${t.overs ? `${t.overs} overs a side` : 'no fixed overs'} · Win ${t.pts.w}, tie ${t.pts.t}, no result ${t.pts.nr}</span></div>
       <div class="tbl-wrap" style="margin-top:0"><table class="tbl pts-tbl"><thead><tr><th>#</th><th>Team</th><th class="num">P</th><th class="num">W</th><th class="num">L</th><th class="num">T</th><th class="num">NR</th><th class="num">Pts</th><th class="num">NRR</th><th></th></tr></thead>
-      <tbody>${rows.map((r, k) => `<tr class="${k === 0 && r.p ? 'hl' : ''}${N && k === N - 1 && rows.length > N ? ' q-line' : ''}"><td class="dim">${k + 1}</td><td><b>${esc(r.team)}</b></td><td class="num">${r.p}</td><td class="num">${r.w}</td><td class="num">${r.l}</td><td class="num">${r.tie}</td><td class="num">${r.nr}</td><td class="num"><b>${r.pts}</b></td><td class="num ${r.nrr == null ? 'dim' : r.nrr >= 0 || Math.abs(r.nrr) < 0.0005 ? 'pos' : 'neg'}">${signed(r.nrr)}</td>
+      <tbody>${rows.map((r, k) => `<tr class="${k === 0 && r.p ? 'hl' : ''}${N && k === N - 1 && rows.length > N ? ' q-line' : ''}"><td class="dim">${k + 1}</td><td><b>${tmLink(r.team)}</b></td><td class="num">${r.p}</td><td class="num">${r.w}</td><td class="num">${r.l}</td><td class="num">${r.tie}</td><td class="num">${r.nr}</td><td class="num"><b>${r.pts}</b></td><td class="num ${r.nrr == null ? 'dim' : r.nrr >= 0 || Math.abs(r.nrr) < 0.0005 ? 'pos' : 'neg'}">${signed(r.nrr)}</td>
         <td class="num">${r.p - r.nr > 0 ? `<button type="button" class="btn ghost sm" data-tr="nrr" data-team="${esc(r.team)}">NRR solver</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
-      <p class="hint">Sorted by points, then ${tbTxt}.${t.tieRule === 'so' ? ' A tie won in a super over counts as a win.' : ''}${N && rows.length > N ? ` The line marks the top ${N}, who go through.` : ''} A side bowled out counts as facing its full ${t.overs ? `${t.overs} overs` : 'quota'}. “NRR solver” opens the Net run rate tab with that team's results, to work out the margin they need.</p>
+      <p class="hint">Sorted by points, then ${tbTxt}.${t.tieRule === 'so' ? ' A tie won in a super over counts as a win.' : ''}${N && rows.length > N ? ` The line marks the top ${N}, who go through.` : ''} A side bowled out counts as facing its full ${t.overs ? `${t.overs} overs` : 'quota'}. Tap a team for its results, form and head-to-head record. “NRR calculator” shows the margin a team needs to pass another; “NRR solver” opens the Net run rate tab with that team's results.</p>
     </div>
     ${qualCard(t, N)}
     ${ko.length ? koCard(t, ko, byId) : ''}
@@ -408,13 +826,18 @@ RENDER.tournament = function renderTournament() {
       ${fxs ? '<p class="hint">“Simulate” makes up a realistic result instead of scoring the match, which is handy for trying out a tournament. Each one comes with a full scorecard (using the squads, if you add them), and about one in 30 league matches is washed out. Simulated results are marked and can be cleared; scored matches are never touched.</p>' : ''}
     </div>
     <div class="grid-2">
-      <div class="card"><h2 class="card-title">Orange Cap · most runs</h2>${bats.length ? `<table class="tbl"><tbody>${bats.map((r, k) => `<tr><td class="dim">${k + 1}</td><td>${esc(r.name)}<div class="dim" style="font-size:.78rem">${esc([...r.teams].join(', '))}</div></td><td class="num"><b>${r.bat.runs}</b></td><td class="num dim">${r.bat.balls ? nf(r.bat.runs / r.bat.balls * 100, 1) : '—'} SR</td></tr>`).join('')}</tbody></table>` : '<p class="hint" style="margin:0">Appears once a match is scored or simulated.</p>'}</div>
-      <div class="card"><h2 class="card-title">Purple Cap · most wickets</h2>${bowls.length ? `<table class="tbl"><tbody>${bowls.map((r, k) => `<tr><td class="dim">${k + 1}</td><td>${esc(r.name)}<div class="dim" style="font-size:.78rem">${esc([...r.teams].join(', '))}</div></td><td class="num"><b>${r.bowl.wkts}</b></td><td class="num dim">${r.bowl.balls ? nf(r.bowl.runs / (r.bowl.balls / 6)) : '—'} econ</td></tr>`).join('')}</tbody></table>` : '<p class="hint" style="margin:0">Appears once a match is scored or simulated.</p>'}</div>
+      ${board('Orange Cap · most runs', bats, r => r.runs, r => `${r.balls ? nf(r.runs / r.balls * 100, 1) : '—'} SR`)}
+      ${board('Purple Cap · most wickets', bowls, r => r.bw, r => `${rr(r.br, r.bb)} econ`)}
     </div>
-    ${six.length ? `<div class="grid-2">
-      <div class="card"><h2 class="card-title">Most sixes</h2><table class="tbl"><tbody>${six.map((r, k) => `<tr><td class="dim">${k + 1}</td><td>${esc(r.name)}<div class="dim" style="font-size:.78rem">${esc([...r.teams].join(', '))}</div></td><td class="num"><b>${r.bat.f6}</b></td></tr>`).join('')}</tbody></table></div>
-      <div class="card"><h2 class="card-title">Highest scores</h2><table class="tbl"><tbody>${hs.map((r, k) => `<tr><td class="dim">${k + 1}</td><td>${esc(r.name)}<div class="dim" style="font-size:.78rem">${esc([...r.teams].join(', '))}</div></td><td class="num"><b>${r.bat.hs}</b></td></tr>`).join('')}</tbody></table></div>
+    ${lead.length ? `<div class="grid-2">
+      ${board('Player of the tournament', mvp, r => nf(r.mvp, 0), r => (r.pom ? plural(r.pom, 'PoM award') : '0 PoM awards'), 'Points from every match: runs (more for quick scoring), wickets (more for tight bowling) and catches.')}
+      ${board('Most sixes', six, r => r.f6, r => `${r.runs} runs`)}
+      ${board('Highest scores', hs, x => `${x.r}${x.out ? '' : '*'}`, x => `${x.b} balls v ${esc(x.opp)}`)}
+      ${board('Best bowling', bestB, x => figs(x), x => `${fmtOvers(x.balls)} ov v ${esc(x.opp)}`)}
+      ${board('Fastest fifty', fast, x => `${x.to50} balls`, x => `${x.r}${x.out ? '' : '*'} v ${esc(x.opp)}`, 'Balls to 50, estimated from the innings strike rate.')}
+      ${board('Best strike rate', srs, r => nf(r.runs / r.balls * 100, 1), r => `${r.runs} off ${r.balls}`, `At least ${minB} balls faced.`)}
     </div>` : ''}
+    ${phaseCard(t, S)}
     ${anySim ? '<p class="hint">Simulated players\' figures count here only. They are not added to the Players tab or your records.</p>' : ''}`;
 };
 
@@ -484,13 +907,15 @@ function tournamentForm(t) {
 }
 
 function manualForm(t, f) {
-  const side = (k, label) => `<p class="modal-sub" style="margin-top:12px">${esc(label)}</p><div class="fields three">
-    <div class="field"><div class="lab"><label for="mr-${k}-r">Runs</label></div><input id="mr-${k}-r" type="text" inputmode="numeric" autocomplete="off"></div>
-    <div class="field"><div class="lab"><label for="mr-${k}-w">Wickets</label></div><input id="mr-${k}-w" type="text" inputmode="numeric" autocomplete="off"></div>
-    <div class="field"><div class="lab"><label for="mr-${k}-o">Overs</label></div><input id="mr-${k}-o" type="text" inputmode="decimal" autocomplete="off" value="${esc(t.overs ?? '')}"></div>
-  </div><label class="check" style="margin-top:8px"><input type="checkbox" id="mr-${k}-ao"> All out</label>`;
-  const body = openModal(`Enter result: ${f.a} v ${f.b}`, `
-    <p class="hint" style="margin:-6px 0 4px">For a match you didn't score in Crease. The higher score wins; equal scores are a tie.</p>
+  const m0 = f.manual, edit = !!m0;
+  const side = (k, label) => { const v = m0?.[k]; return `<p class="modal-sub" style="margin-top:12px">${esc(label)}</p><div class="fields three">
+    <div class="field"><div class="lab"><label for="mr-${k}-r">Runs</label></div><input id="mr-${k}-r" type="text" inputmode="numeric" autocomplete="off" value="${esc(v?.r ?? '')}"></div>
+    <div class="field"><div class="lab"><label for="mr-${k}-w">Wickets</label></div><input id="mr-${k}-w" type="text" inputmode="numeric" autocomplete="off" value="${esc(v?.w ?? '')}"></div>
+    <div class="field"><div class="lab"><label for="mr-${k}-o">Overs</label></div><input id="mr-${k}-o" type="text" inputmode="decimal" autocomplete="off" value="${esc(v ? fmtOvers(v.balls) : t.overs ?? '')}"></div>
+  </div><label class="check" style="margin-top:8px"><input type="checkbox" id="mr-${k}-ao"${v?.ao ? ' checked' : ''}> All out</label>`; };
+  const body = openModal(`${edit ? 'Edit' : 'Enter'} result: ${f.a} v ${f.b}`, `
+    <p class="hint" style="margin:-6px 0 4px">${edit ? (m0.sim ? 'Changing a simulated result turns it into a typed-in one, so its made-up scorecard and player figures go.' : 'Change the scores and save.') : 'For a match you didn\'t score in Crease.'} The higher score wins; equal scores are a tie.</p>
+    <div class="field" style="margin-top:10px"><div class="lab"><label for="mr-first">Batted first</label></div><select id="mr-first"><option value="">Not sure</option><option value="a"${m0?.first === 'a' ? ' selected' : ''}>${esc(f.a)}</option><option value="b"${m0?.first === 'b' ? ' selected' : ''}>${esc(f.b)}</option></select></div>
     ${side('a', f.a)}${side('b', f.b)}
     <p class="err-text" id="mr-err"></p>
     <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Save result</button></div>`);
@@ -512,8 +937,10 @@ function manualForm(t, f) {
     const A = read('a'), B = read('b');
     if (typeof A === 'string') { err.textContent = A; return; }
     if (typeof B === 'string') { err.textContent = B; return; }
-    f.manual = { a: A, b: B }; f.matchId = null; f.nr = false; f.simNR = false; f.so = null;
-    update(t); closeModal(); RENDER.tournament(); toast('Result saved');
+    const first = $('#mr-first', body).value;
+    f.manual = { a: A, b: B, ...(first ? { first } : {}) }; f.matchId = null; f.nr = false; f.simNR = false; f.so = null; delete f.pom;
+    const n = reflowKO(t);
+    update(t); closeModal(); RENDER.tournament(); toast((edit ? 'Result updated.' : 'Result saved.') + resetMsg(n));
   });
 }
 
@@ -578,7 +1005,9 @@ function soForm(t, f) {
     closeModal();
     if (v === 'cancel') return;
     f.so = v === 'a' || v === 'b' ? v : null;
+    const n = reflowKO(t);
     update(t); RENDER.tournament();
+    if (n) { toast(resetMsg(n).trim()); return; }
     toast(f.so ? `${f.so === 'a' ? f.a : f.b} won the super over` : 'Super over removed');
   });
 }
@@ -782,10 +1211,23 @@ $('#tr-main').addEventListener('click', async e => {
       break;
     }
     case 'simcard': if (f?.manual?.card) simCardModal(t, f); break;
+    case 'resim':
+      if (f && isSim(f)) {
+        f.manual = null; f.nr = false; f.simNR = false; f.so = null; delete f.pom;
+        simulateFixture(t, f);
+        const n = reflowKO(t);
+        update(t); RENDER.tournament(); toast('Simulated again.' + resetMsg(n));
+      }
+      break;
+    case 'pom': if (f) pomForm(t, f); break;
+    case 'player': playerModal(t, b.dataset.key); break;
+    case 'team': teamModal(t, b.dataset.team); break;
+    case 'nrrcalc': nrrCalcForm(t); break;
+    case 'fxedit': if (f) fxEditForm(t, f); break;
     case 'squads': squadsForm(t); break;
     case 'sim-clear':
       if (await confirmBox('Clear simulated results?', 'Every simulated result goes back to not played. Scored and typed-in results stay.', 'Clear', true)) {
-        t.fixtures.forEach(x => { if (x.manual?.sim) { x.manual = null; x.so = null; } if (x.simNR) { x.nr = false; x.simNR = false; } });
+        t.fixtures.forEach(x => { if (x.manual?.sim) { x.manual = null; x.so = null; delete x.pom; } if (x.simNR) { x.nr = false; x.simNR = false; } });
         t.sim = {};
         syncFinal(t, new Map(finishedMatches().map(m => [m.id, m])));
         update(t); RENDER.tournament(); toast('Simulated results cleared');
@@ -810,10 +1252,12 @@ $('#tr-main').addEventListener('click', async e => {
     case 'score': if (f) scoreFixture(t, f); break;
     case 'manual': if (f) manualForm(t, f); break;
     case 'link': if (f) linkForm(t, f); break;
-    case 'nr': if (f) { f.nr = true; f.simNR = false; f.manual = null; f.matchId = null; f.so = null; update(t); RENDER.tournament(); toast('Marked as no result'); } break;
+    case 'nr': if (f) { f.nr = true; f.simNR = false; f.manual = null; f.matchId = null; f.so = null; delete f.pom; const n = reflowKO(t); update(t); RENDER.tournament(); toast('Marked as no result.' + resetMsg(n)); } break;
     case 'clear':
       if (f && await confirmBox('Clear this result?', 'The fixture goes back to not played. A linked scorecard stays in Saved matches.', 'Clear result')) {
-        f.nr = false; f.simNR = false; f.manual = null; f.matchId = null; f.so = null; update(t); RENDER.tournament();
+        f.nr = false; f.simNR = false; f.manual = null; f.matchId = null; f.so = null; delete f.pom;
+        const n = reflowKO(t);
+        update(t); RENDER.tournament(); if (n) toast(resetMsg(n).trim());
       }
       break;
     case 'remove':
