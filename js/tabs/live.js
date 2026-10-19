@@ -181,6 +181,10 @@ function coreBall(ev) {
   const over = i.overs[i.overs.length - 1];
   const bw = i.bowlers[i.bowler];
   const strikerBefore = i.striker, nonBefore = i.non;
+  if (ev.type === 'wkt' && ev.impact) { // an impact player coming on as the new batter: check before anything changes
+    const c = impactProblem(i.bat, ev.impact.out, ev.impact.in, ev.how === 'run out' && ev.outWho === 'non' ? nonBefore : strikerBefore);
+    if (c.err) return c.err;
+  }
   const st = i.batters[i.striker];
   const cm = commSink ? { ballNo: `${Math.floor(i.balls / 6)}.${(i.balls % 6) + 1}`, runsBefore: st.runs, wkBefore: bw.wkts, partBefore: i.part.runs } : null;
   let legal = true, total = 0, bowlerRuns = 0, ran = 0, label = '', cls = '', noneLeft = false;
@@ -267,6 +271,7 @@ function coreBall(ev) {
     i.fow.push({ score: i.runs, wkt: i.wkts, name: ob.name, over: fmtOvers(i.balls) });
     i.part = { runs: 0, balls: 0 };
     if (canBringIn(i)) {
+      if (ev.impact) { const e2 = coreImpact(i.bat, ev.impact.out, ev.impact.in); if (!e2) ev = { ...ev, newBatter: live.subs[i.bat].in }; }
       const ni = bringIn(i, ev.newBatter);
       if (i.striker === outIdx) i.striker = ni; else if (i.non === outIdx) i.non = ni;
       newPart(i);
@@ -335,6 +340,7 @@ function commentBall({ i, ev, bw, st, cm, total, r, batRuns, stand, strikerBefor
   if (cm.wkBefore < 10 && bw.wkts >= 10) say('ms', `All ten for ${bw.name}: ${bw.wkts}/${bw.runs}`);
   else if (cm.wkBefore < 5 && bw.wkts >= 5) say('ms', `Five-for for ${bw.name}: ${bw.wkts}/${bw.runs}`);
   if (ev.type === 'wkt') {
+    if (ev.impact && live.subs?.[i.bat]) say('event', `Impact Player: ${live.subs[i.bat].in} replaces ${live.subs[i.bat].out} for ${live.teams[i.bat]}`);
     const outK = ev.how === 'run out' && ev.outWho === 'non' ? nonBefore : strikerBefore;
     const survivor = outK === strikerBefore ? nonBefore : strikerBefore;
     const inK = [i.striker, i.non].find(k => k !== survivor);
@@ -994,33 +1000,48 @@ export function computeResult() {
 }
 
 // Impact Player: `out` leaves the match and `inName` joins the squad. The name is given when the swap is made.
-function coreImpact(team, out, inName) {
-  if (!live.impact) return 'the Impact Player rule is off';
-  if (live.status === 'done') return 'the match had already finished';
+// Checks an impact swap without changing anything. `skip` is a batter who is being dismissed on this ball.
+function impactProblem(team, out, inName, skip = -1) {
+  if (!live.impact) return { err: 'the Impact Player rule is off' };
+  if (live.status === 'done') return { err: 'the match had already finished' };
   const sq = sqOf(live, team);
-  if (!sq) return 'that team has no squad to swap a player in';
-  if (live.subs?.[team]) return `${live.teams[team]} have already used their impact player`;
+  if (!sq) return { err: 'that team has no squad to swap a player in' };
+  if (live.subs?.[team]) return { err: `${live.teams[team]} have already used their impact player` };
   let nm = String(inName || '').trim().replace(/\s+/g, ' ');
-  if (!nm) return 'choose or type the impact player\'s name';
+  if (!nm) return { err: 'choose or type the impact player\'s name' };
   nm = (live.bench?.[team] || []).find(n => sameName(n, nm)) || nm; // a bench name keeps its spelling
   const xi = sq.length === 12 ? sq.slice(0, 11) : sq;
   const o = xi.find(n => sameName(n, out));
-  if (!o) return 'pick a player from the playing XI';
-  if (sameName(nm, o)) return 'the impact player must be someone else';
-  if (xi.some(n => sameName(n, nm))) return `${nm} is already in the playing XI`;
+  if (!o) return { err: 'pick a player from the playing XI' };
+  if (sameName(nm, o)) return { err: 'the impact player must be someone else' };
+  if (xi.some(n => sameName(n, nm))) return { err: `${nm} is already in the playing XI` };
   if (live.status === 'live') {
     const i = cur();
-    if (i.bat === team && [i.striker, i.non].some(k => i.batters[k] && sameName(i.batters[k].name, o))) return `${o} is batting`;
-    if (i.bat !== team && !i.needBowler && i.bowlers[i.bowler] && sameName(i.bowlers[i.bowler].name, o)) return `${o} is bowling this over`;
+    if (i.bat === team && [i.striker, i.non].some(k => k !== skip && i.batters[k] && !i.batters[k].out && sameName(i.batters[k].name, o))) return { err: `${o} is batting` };
+    if (i.bat !== team && !i.needBowler && i.bowlers[i.bowler] && sameName(i.bowlers[i.bowler].name, o)) return { err: `${o} is bowling this over` };
   }
+  return { o, nm, xi };
+}
+// Impact Player: `out` leaves the match and the impact player joins the squad.
+function coreImpact(team, out, inName) {
+  const c = impactProblem(team, out, inName);
+  if (c.err) return c.err;
   live.squads = [...live.squads];
-  live.squads[team] = [...xi, nm]; // a name listed as the 12th in advance is replaced by the one given now
+  live.squads[team] = [...c.xi, c.nm];
   live.subs = [live.subs?.[0] || null, live.subs?.[1] || null];
-  live.subs[team] = { out: o, in: nm };
+  live.subs[team] = { out: c.o, in: c.nm };
   return null;
 }
 // The substitutes a team can bring on: its impact bench (and, in an older match, a pre-named 12th player).
 const benchList = team => { const sq = sqOf(live, team) || []; return [...(sq.length === 12 ? [sq[11]] : []), ...(live.bench?.[team] || [])].filter((n, k, a) => a.findIndex(x => sameName(x, n)) === k); };
+// The "impact player coming on" fields: a bench dropdown (when there is a bench) plus a typed name. Ids start with `p`.
+const impactInHTML = (team, p) => {
+  const bn = benchList(team);
+  return `${bn.length ? selectField(`${p}-pick`, 'Impact player coming on', [...bn.map(n => ({ v: n, l: n })), { v: '', l: 'Someone else: type a name' }], bn[0]) : ''}
+    <div id="${p}-in-w" style="grid-column:1/-1"${bn.length ? ' hidden' : ''}>${liveField(`${p}-in`, bn.length ? 'Name' : 'Impact player coming on', '', { wide: true })}</div>`;
+};
+const impactInVal = (body, p) => $(`#${p}-pick`, body)?.value || $(`#${p}-in`, body)?.value || '';
+const impactInWire = (body, p) => body.addEventListener('change', e => { if (e.target.id === `${p}-pick`) $(`#${p}-in-w`, body).hidden = !!e.target.value; });
 const impactAvail = () => !!live && live.impact && live.status !== 'done' && [0, 1].some(t => sqOf(live, t) && !live.subs?.[t]);
 function impactModal() {
   if (!impactAvail()) { toast('No impact player is left to bring on.'); return; }
@@ -1037,18 +1058,16 @@ function impactModal() {
     const xi = sq.length === 12 ? sq.slice(0, 11) : sq;
     const busy = n => i && ((i.bat === team && [i.striker, i.non].some(k => i.batters[k] && sameName(i.batters[k].name, n))) || (i.bat !== team && !i.needBowler && i.bowlers[i.bowler] && sameName(i.bowlers[i.bowler].name, n)));
     const opts = xi.filter(n => !busy(n)).map(n => ({ v: n, l: n + roleTag(live, team, n) }));
-    const bn = benchList(team);
-    $('#ip-body', body).innerHTML = `${selectField('ip-out', 'Goes off', opts, opts[0]?.v)}${bn.length ? selectField('ip-pick', 'Impact player coming on', [...bn.map(n => ({ v: n, l: n })), { v: '', l: 'Someone else: type a name' }], bn[0]) : ''}
-      <div id="ip-in-w" style="grid-column:1/-1"${bn.length ? ' hidden' : ''}>${liveField('ip-in', bn.length ? 'Name' : 'Impact player coming on', '', { wide: true })}</div>`;
+    $('#ip-body', body).innerHTML = `${selectField('ip-out', 'Goes off', opts, opts[0]?.v)}${impactInHTML(team, 'ip')}`;
   };
-  body.addEventListener('change', e => { if (e.target.id === 'ip-pick') $('#ip-in-w', body).hidden = !!e.target.value; });
+  impactInWire(body, 'ip');
   draw();
   body.addEventListener('click', e => {
     const t = e.target.closest('[data-t]'), x = e.target.closest('[data-x]');
     if (t) { team = Number(t.dataset.t); body.querySelectorAll('[data-t]').forEach(b => b.setAttribute('aria-pressed', String(b === t))); draw(); return; }
     if (!x) return;
     if (x.dataset.x === 'cancel') { closeModal(); return; }
-    const out = $('#ip-out', body)?.value, nm = $('#ip-pick', body)?.value || $('#ip-in', body)?.value;
+    const out = $('#ip-out', body)?.value, nm = impactInVal(body, 'ip');
     const err = act({ t: 'impact', team, out, inn: nm }, () => coreImpact(team, out, nm));
     if (err) { $('#ip-err', body).textContent = `Can't do that: ${err}.`; return; }
     closeModal();
@@ -1965,6 +1984,8 @@ export function wicketModal() {
   const fh = i.freeHit;
   const last = !(freshLeft(i) > 0 || i.batters.some(b => b.retired));
   const st = i.batters[i.striker], ns = i.batters[i.non];
+  // An impact player can come on as the new batter, so the swap is made as the wicket is recorded.
+  const canImp = !last && live.impact && !live.subs?.[i.bat] && !!sqOf(live, i.bat);
   let ball = 'fair', how = fh ? 'run out' : 'bowled', who = 'striker', runs = 0;
   const allowed = () => fh ? ['run out'] : TYPES[ball];
   const body = openModal('Wicket', `
@@ -1985,7 +2006,10 @@ export function wicketModal() {
       <div class="field" id="wk-f-wrap">${fielderField(i)}</div>
       ${last ? '' : batterNameField(i, 'wk-new', 'New batter')}
     </div>
+    ${canImp ? `<div id="wk-imp" class="fields one" hidden>${selectField('wk-imp-out', 'Impact player replaces', [{ v: '', l: '' }], '')}${impactInHTML(i.bat, 'wk-ip')}</div>
+    <p class="hint" id="wk-imp-h" hidden>The impact player comes on as the new batter. The player who goes off takes no further part.</p>` : ''}
     ${last ? '<p class="hint">Nobody is left to bat, so this wicket ends the innings.</p>' : ''}
+    <p class="err-text" id="wk-err"></p>
     <p class="hint" id="wk-note"></p>
     <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn solid-danger" data-x="ok">Record wicket</button></div>`);
   const press = (wrap, attr, val) => $$(`[data-${attr}]`, wrap).forEach(b => b.setAttribute('aria-pressed', String(b.dataset[attr] === String(val))));
@@ -2006,18 +2030,43 @@ export function wicketModal() {
     $('#wk-note').textContent = ball === 'wd' ? 'The wide still counts: 1 run plus any runs completed, and the ball is bowled again.' : ball === 'nb' ? 'The no-ball still counts, and the next ball is a free hit.' : '';
     if (how !== 'run out') { who = 'striker'; press($('#wk-who'), 'who', who); }
   };
+  // Who can go off: the playing XI, except the batter who stays at the crease (the one dismissed can be replaced).
+  const impOut = () => {
+    const sel = $('#wk-imp-out', body);
+    if (!sel) return;
+    const keep = who === 'non' && how === 'run out' ? st : ns, sq = sqOf(live, i.bat), xi = sq.length === 12 ? sq.slice(0, 11) : sq;
+    const prev = sel.value;
+    const opts = xi.filter(n => !sameName(n, keep.name));
+    sel.innerHTML = opts.map(n => `<option value="${esc(n)}">${esc(n + roleTag(live, i.bat, n))}</option>`).join('');
+    if (opts.includes(prev)) sel.value = prev;
+  };
+  const impOn = () => $('#wk-new', body)?.value === '__imp';
+  if (canImp) {
+    $('#wk-new', body)?.insertAdjacentHTML('beforeend', '<option value="__imp">Impact player (comes on as the new batter)</option>');
+    impactInWire(body, 'wk-ip');
+    body.addEventListener('change', e => {
+      if (e.target.id === 'wk-new') { $('#wk-imp', body).hidden = $('#wk-imp-h', body).hidden = !impOn(); impOut(); }
+    });
+  }
   sync();
   $('#wk-fielder')?.addEventListener('change', e => { e.target.dataset.auto = '0'; });
   body.addEventListener('click', e => {
     const bl = e.target.closest('[data-ball]'), h = e.target.closest('[data-how]'), w = e.target.closest('[data-who]'), r = e.target.closest('[data-runs]'), x = e.target.closest('[data-x]');
     if (bl) { ball = bl.dataset.ball; press($('#wk-ball'), 'ball', ball); sync(); }
-    if (h) { how = h.dataset.how; sync(); }
-    if (w) { who = w.dataset.who; press($('#wk-who'), 'who', who); }
+    if (h) { how = h.dataset.how; sync(); impOut(); }
+    if (w) { who = w.dataset.who; press($('#wk-who'), 'who', who); impOut(); }
     if (r) { runs = Number(r.dataset.runs); press($('#wk-runs'), 'runs', runs); }
     if (x) {
       if (x.dataset.x === 'cancel') { closeModal(); return; }
       const takesRuns = how === 'run out';
       const ev = { type: 'wkt', ball, how, outWho: how === 'run out' ? who : 'striker', runs: takesRuns ? runs : 0, fielder: $('#wk-fielder')?.value || '', newBatter: $('#wk-new')?.value || '' };
+      if (impOn()) {
+        const nm = impactInVal(body, 'wk-ip'), out = $('#wk-imp-out', body)?.value;
+        const skip = how === 'run out' && who === 'non' ? i.non : i.striker;
+        const c = impactProblem(i.bat, out, nm, skip);
+        if (c.err) { $('#wk-err', body).textContent = `Can't bring the impact player on: ${c.err}.`; return; }
+        ev.impact = { out: c.o, in: c.nm }; ev.newBatter = c.nm;
+      }
       closeModal();
       applyBall(ev);
     }
