@@ -249,7 +249,7 @@ function spreadSchedule(t) {
 function squadsForm(t) {
   const max = t.impact ? 12 : 11, sq = squads();
   const body = openModal('Squads', `
-    <p class="hint" style="margin:-6px 0 12px">One name per line, in batting order${t.impact ? ', 12 per team: the XI and the impact player' : ', 11 per team'}. Add (c) after the captain and (wk) after the keeper. Simulated matches use these names for their scorecards; teams without a squad get numbered players. The live scorer uses the same squads.</p>
+    <p class="hint" style="margin:-6px 0 12px">One name per line, in batting order${t.impact ? ', the 11 who start. You name the impact player later, when you make the swap in the live scorer' : ', 11 per team'}. Add (c) after the captain and (wk) after the keeper. Simulated matches use these names for their scorecards; teams without a squad get numbered players. The live scorer uses the same squads.</p>
     <div class="grid-2">${t.teams.map((n, k) => `<div class="field"><div class="lab"><label for="sq-${k}">${esc(n)}</label></div><textarea id="sq-${k}" rows="${max}" spellcheck="false">${esc((sq[n.toLowerCase()] || []).join('\n'))}</textarea></div>`).join('')}</div>
     <p class="err-text" id="sq-err"></p>
     <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Save squads</button></div>`, { wide: true });
@@ -438,7 +438,7 @@ function tournamentForm(t) {
       <div class="field"><div class="lab"><label for="tf-tb">Level on points</label></div><select id="tf-tb">${Object.entries(TIEBREAKS).map(([k, l]) => `<option value="${k}"${(t?.tiebreak || 'nrr') === k ? ' selected' : ''}>${esc(l[0].toUpperCase() + l.slice(1))}</option>`).join('')}</select></div>
       <div class="field"><div class="lab"><label for="tf-q">Teams that go through</label></div><input id="tf-q" type="text" inputmode="numeric" autocomplete="off" value="${esc(Number.isInteger(t?.qualify) ? t.qualify : '')}" placeholder="Top 4"></div>
     </div>
-    <label class="check" style="margin-top:12px"><input type="checkbox" id="tf-imp"${t?.impact ? ' checked' : ''}> Impact Player rule: squads of 12, any of them can bat or bowl, only 11 bat</label>
+    <label class="check" style="margin-top:12px"><input type="checkbox" id="tf-imp"${t?.impact ? ' checked' : ''}> Impact Player rule: each side can swap one player for a substitute during the match</label>
     <p class="hint">After a team's name you can add its home ground, like “Chennai | Chepauk”. The first team named in a fixture is at home. With “Super over decides”, the super-over winner of a tied match gets the points for a win. Knockouts always use the super over. Leave “Teams that go through” empty for the top 4 (top 2 with four teams or fewer), or enter 0 to hide the qualification card.</p>
     ${t ? '<p class="hint">Renaming a team here keeps its fixtures, as long as it stays on the same line. Removing a team removes its fixtures.</p>' : ''}
     <p class="err-text" id="tf-err"></p>
