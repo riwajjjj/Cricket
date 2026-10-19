@@ -813,8 +813,18 @@ RENDER.tournament = function renderTournament() {
   const bats = top(r => r.inns > 0, (a, b) => b.runs - a.runs || a.balls - b.balls);
   const bowls = top(r => r.bw > 0, (a, b) => b.bw - a.bw || a.br - b.br);
   const six = top(r => r.f6 > 0, (a, b) => b.f6 - a.f6 || b.runs - a.runs);
-  const minB = Math.min(100, Math.max(30, 3 * O));
+  // Minimum balls faced for Best strike rate: a quarter of the most any batter has faced, so it fills in early and stays fair later (at most 3 balls per over of the format, up to 100).
+  const topBalls = lead.reduce((m, r) => Math.max(m, r.balls), 0);
+  const minB = Math.min(Math.min(100, Math.max(30, 3 * O)), Math.max(Math.min(10, topBalls), Math.ceil(topBalls / 4)));
   const srs = top(r => r.balls >= minB, (a, b) => b.runs / b.balls - a.runs / a.balls);
+  // Best economy needs a minimum of overs bowled, a quarter of the most any bowler has bowled (so it fills in early).
+  const topBB = lead.reduce((m, r) => Math.max(m, r.bb), 0);
+  const minBB = Math.min(3 * O, Math.max(Math.min(12, topBB), Math.ceil(topBB / 4)));
+  const eco = top(r => r.bb > 0 && r.bb >= minBB, (a, b) => a.br / a.bb - b.br / b.bb || b.bw - a.bw);
+  const fours = top(r => r.f4 > 0, (a, b) => b.f4 - a.f4 || b.runs - a.runs);
+  const minInns = Math.min(3, lead.reduce((m, r) => Math.max(m, r.inns), 0));
+  const avgs = top(r => r.inns >= minInns && r.inns - r.no > 0, (a, b) => b.runs / (b.inns - b.no) - a.runs / (a.inns - a.no) || b.runs - a.runs);
+  const fielders = top(r => r.fd > 0, (a, b) => b.fd - a.fd || b.m - a.m);
   const mvp = top(r => r.mvp > 0, (a, b) => b.mvp - a.mvp || b.pom - a.pom);
   const hs = S.inns.slice().sort((a, b) => b.r - a.r || a.b - b.b).slice(0, 5);
   // Balls to reach fifty, estimated from the innings' strike rate (simulated cards don't record every ball).
@@ -852,7 +862,11 @@ RENDER.tournament = function renderTournament() {
       ${board('Highest scores', hs, x => `${x.r}${x.out ? '' : '*'}`, x => `${x.b} balls v ${esc(x.opp)}`)}
       ${board('Best bowling', bestB, x => figs(x), x => `${fmtOvers(x.balls)} ov v ${esc(x.opp)}`)}
       ${board('Fastest fifty', fast, x => `${x.to50} balls`, x => `${x.r}${x.out ? '' : '*'} v ${esc(x.opp)}`, 'Balls to 50, estimated from the innings strike rate.')}
-      ${board('Best strike rate', srs, r => nf(r.runs / r.balls * 100, 1), r => `${r.runs} off ${r.balls}`, `At least ${minB} balls faced.`)}
+      ${board('Best strike rate', srs, r => nf(r.runs / r.balls * 100, 1), r => `${r.runs} off ${r.balls}`, `At least ${minB} balls faced (this grows as the tournament goes on).`)}
+      ${board('Best economy', eco, r => rr(r.br, r.bb), r => `${fmtOvers(r.bb)} ov · ${plural(r.bw, 'wkt')}`, `At least ${fmtOvers(minBB)} overs bowled (this grows as the tournament goes on).`)}
+      ${board('Best batting average', avgs, r => nf(r.runs / (r.inns - r.no), 2), r => `${r.runs} runs · ${plural(r.inns, 'inns', 'inns')}`, `At least ${plural(minInns, 'innings', 'innings')}, and out at least once.`)}
+      ${board('Most fours', fours, r => r.f4, r => `${r.runs} runs`)}
+      ${board('Best fielders', fielders, r => r.fd, r => plural(r.m, 'match', 'matches'), 'Catches, stumpings and run outs.')}
     </div>` : ''}
     ${phaseCard(t, S)}
     ${anySim ? '<p class="hint">Simulated players\' figures count here only. They are not added to the Players tab or your records.</p>' : ''}`;
