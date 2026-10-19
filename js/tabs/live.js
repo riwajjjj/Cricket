@@ -2313,6 +2313,19 @@ $('#tab-live').addEventListener('input', e => {
   if (!live && e.target.closest('#live-main')) setupSync(e.target);
   if (live && e.target.id === 'l2-lost') previewLost2();
 });
+// A browser only lists the datalist names that match what is already typed, so a filled-in name hides the rest.
+// Clear the box on focus so the whole squad shows, and put the name back if nothing was picked.
+$('#tab-live').addEventListener('focusin', e => {
+  const el = e.target;
+  if (live || !['ls-s', 'ls-ns', 'ls-bw'].includes(el.id) || !el.list?.options.length) return;
+  el.dataset.prev = el.value; el.value = '';
+});
+$('#tab-live').addEventListener('focusout', e => {
+  const el = e.target;
+  if (el.dataset?.prev == null || !['ls-s', 'ls-ns', 'ls-bw'].includes(el.id)) return;
+  if (!el.value.trim()) el.value = el.dataset.prev;
+  delete el.dataset.prev;
+});
 $('#live-cards').addEventListener('toggle', e => {
   const d = e.target;
   if (!(d instanceof HTMLDetailsElement) || d.dataset.bbb == null || !live) return;
