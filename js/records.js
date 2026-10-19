@@ -66,7 +66,7 @@ export function buildRecords(matches = finishedMatches(), { includeBase = true, 
         g.bat = { r: b.runs, b: b.balls, out: !!b.out };
         if (b.out) {
           const dis = parseDismissal(b);
-          const f = dis.fielder && !SKIP_FIELDERS.has(nameKey(dis.fielder)) ? get(dis.fielder, fldTeam) : null;
+          const f = dis.fielder && !SKIP_FIELDERS.has(nameKey(dis.fielder)) && !/^sub(stitute)?\b/i.test(dis.fielder) ? get(dis.fielder, fldTeam) : null; // substitutes aren't in the squad
           if (f) {
             const gf = line(f);
             if (dis.how === 'caught') { f.field.ct++; gf.ct++; }

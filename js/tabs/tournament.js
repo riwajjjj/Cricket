@@ -273,7 +273,7 @@ function matchFigures(t, f, byId) {
   const phT = team => ph[team] || (ph[team] = { bat: blankPh(), bowl: blankPh() });
   const fielding = (b, fldTeam) => {
     const d = parseDismissal(b);
-    if (d.fielder && ['caught', 'stumped', 'run out'].includes(d.how)) { const q = get(d.fielder, fldTeam); if (q) q.fd++; }
+    if (d.fielder && !/^sub(stitute)?\b/i.test(d.fielder) && ['caught', 'stumped', 'run out'].includes(d.how)) { const q = get(d.fielder, fldTeam); if (q) q.fd++; }
   };
   // overs: [{ b: bowler index, r: runs, br: runs off the bowler, w: wickets, l: legal balls }]
   const addOvers = (bt, ft, overs, nameOf) => {

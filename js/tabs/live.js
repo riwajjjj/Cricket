@@ -1975,7 +1975,7 @@ function fielderField(i) {
   if (!fsq) return `<div class="lab"><label for="wk-fielder">Fielder</label></div><input id="wk-fielder" type="text" maxlength="30" autocomplete="off" placeholder="Optional">`;
   const bowler = i.bowlers[i.bowler]?.name;
   const opts = [{ v: '', l: 'Not recorded' }, ...fsq.map(n => ({ v: n, l: n + roleTag(live, 1 - i.bat, n) + (bowler && sameName(n, bowler) ? ' (bowler)' : '') })), { v: 'sub', l: 'Substitute fielder' }];
-  return selectField('wk-fielder', 'Fielder', opts, '').replace(/^<div class="field">|<\/div>$/g, '');
+  return selectField('wk-fielder', 'Fielder', opts, '').replace(/^<div class="field">|<\/div>$/g, '') + '<input id="wk-sub" type="text" maxlength="30" autocomplete="off" placeholder="Substitute\'s name (optional)" aria-label="Substitute fielder\'s name" style="margin-top:8px" hidden>';
 }
 const TYPES = { fair: ['bowled', 'caught', 'lbw', 'stumped', 'hit wicket', 'run out'], wd: ['stumped', 'hit wicket', 'run out'], nb: ['run out'] };
 const typeLabel = t => t === 'lbw' ? 'LBW' : t[0].toUpperCase() + t.slice(1);
@@ -2049,7 +2049,11 @@ export function wicketModal() {
     });
   }
   sync();
-  $('#wk-fielder')?.addEventListener('change', e => { e.target.dataset.auto = '0'; });
+  $('#wk-fielder')?.addEventListener('change', e => {
+    e.target.dataset.auto = '0';
+    const sb = $('#wk-sub', body);
+    if (sb) { sb.hidden = e.target.value !== 'sub'; if (!sb.hidden) sb.focus(); }
+  });
   body.addEventListener('click', e => {
     const bl = e.target.closest('[data-ball]'), h = e.target.closest('[data-how]'), w = e.target.closest('[data-who]'), r = e.target.closest('[data-runs]'), x = e.target.closest('[data-x]');
     if (bl) { ball = bl.dataset.ball; press($('#wk-ball'), 'ball', ball); sync(); }
@@ -2059,7 +2063,9 @@ export function wicketModal() {
     if (x) {
       if (x.dataset.x === 'cancel') { closeModal(); return; }
       const takesRuns = how === 'run out';
-      const ev = { type: 'wkt', ball, how, outWho: how === 'run out' ? who : 'striker', runs: takesRuns ? runs : 0, fielder: $('#wk-fielder')?.value || '', newBatter: $('#wk-new')?.value || '' };
+      let fielder = $('#wk-fielder')?.value || '';
+      if (fielder === 'sub') { const sn = ($('#wk-sub', body)?.value || '').replace(/[()]/g, ' ').trim().replace(/\s+/g, ' '); fielder = sn ? `sub (${sn})` : 'sub'; } // a substitute can be named
+      const ev = { type: 'wkt', ball, how, outWho: how === 'run out' ? who : 'striker', runs: takesRuns ? runs : 0, fielder, newBatter: $('#wk-new')?.value || '' };
       if (impOn()) {
         const nm = impactInVal(body, 'wk-ip'), out = $('#wk-imp-out', body)?.value;
         const skip = how === 'run out' && who === 'non' ? i.non : i.striker;
