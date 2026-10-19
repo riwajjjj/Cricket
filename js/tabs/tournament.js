@@ -87,12 +87,15 @@ function strengthOf(t, team) {
 // A team's players, from the squads saved in the live scorer (Squads button). Without one, numbered players.
 const ROLE = /\s*\((?:wk|keeper|c|capt|captain)\)\s*|†/gi;
 const squads = () => { const v = store.get('squads', {}); return v && typeof v === 'object' ? v : {}; };
+const benches = () => { const v = store.get('benches', {}); return v && typeof v === 'object' ? v : {}; };
 function squadOf(t, team) {
   const raw = squads()[String(team).toLowerCase()];
   const names = Array.isArray(raw) ? raw.map(n => String(n).replace(ROLE, ' ').trim().replace(/\s+/g, ' ')).filter(Boolean) : [];
-  const max = t.impact ? 12 : 11;
-  if (names.length >= 11) return names.slice(0, max);
-  return Array.from({ length: max }, (_, k) => names[k] || `${team} ${k + 1}`);
+  // With the impact rule the 12th name is the first impact bench player (who can bowl in simulated matches).
+  const b0 = (benches()[String(team).toLowerCase()] || [])[0];
+  const twelfth = t.impact ? names[11] || b0 || `${team} 12` : null;
+  if (names.length >= 11) return twelfth ? [...names.slice(0, 11), twelfth] : names.slice(0, 11);
+  return [...Array.from({ length: 11 }, (_, k) => names[k] || `${team} ${k + 1}`), ...(twelfth ? [twelfth] : [])];
 }
 // Split `total` into whole numbers in proportion to `w`.
 function share(total, w) {
@@ -477,27 +480,41 @@ function spreadSchedule(t) {
 }
 // Edit each team's players. Squads are shared with the live scorer, so scoring a fixture picks them up too.
 function squadsForm(t) {
-  const max = t.impact ? 12 : 11, sq = squads();
+  const sq = squads(), bn = benches();
+  // An older 12-name squad: its 12th name starts the bench.
+  const xiOf = n => (sq[n.toLowerCase()] || []).slice(0, 11);
+  const benchOfTeam = n => [...(sq[n.toLowerCase()] || []).slice(11), ...(bn[n.toLowerCase()] || [])];
   const body = openModal('Squads', `
-    <p class="hint" style="margin:-6px 0 12px">One name per line, in batting order${t.impact ? ', the 11 who start. You name the impact player later, when you make the swap in the live scorer' : ', 11 per team'}. Add (c) after the captain and (wk) after the keeper. Simulated matches use these names for their scorecards; teams without a squad get numbered players. The live scorer uses the same squads.</p>
-    <div class="grid-2">${t.teams.map((n, k) => `<div class="field"><div class="lab"><label for="sq-${k}">${esc(n)}</label></div><textarea id="sq-${k}" rows="${max}" spellcheck="false">${esc((sq[n.toLowerCase()] || []).join('\n'))}</textarea></div>`).join('')}</div>
+    <p class="hint" style="margin:-6px 0 12px">One name per line, in batting order, 11 per team. Add (c) after the captain and (wk) after the keeper.${t.impact ? ' With the Impact Player rule, list the substitutes you may bring on in the impact bench.' : ''} Simulated matches use these names for their scorecards; teams without a squad get numbered players. The live scorer uses the same squads.</p>
+    <div class="grid-2">${t.teams.map((n, k) => `<div class="field"><div class="lab"><label for="sq-${k}">${esc(n)}</label></div><textarea id="sq-${k}" rows="11" spellcheck="false">${esc(xiOf(n).join('\n'))}</textarea>
+      ${t.impact ? `<div class="lab" style="margin-top:10px"><label for="bn-${k}">${esc(n)} impact bench</label></div><textarea id="bn-${k}" rows="4" spellcheck="false" placeholder="Up to 7 substitutes">${esc(benchOfTeam(n).join('\n'))}</textarea>` : ''}</div>`).join('')}</div>
     <p class="err-text" id="sq-err"></p>
     <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Save squads</button></div>`, { wide: true });
   body.addEventListener('click', e => {
     const x = e.target.closest('[data-x]');
     if (!x) return;
     if (x.dataset.x === 'cancel') { closeModal(); return; }
-    const all = squads();
+    const all = squads(), allB = benches();
+    const lines = id => $(id, body).value.split('\n').map(v => v.trim().replace(/\s+/g, ' ')).filter(Boolean);
+    const plainOf = names => names.map(v => v.replace(ROLE, ' ').trim().toLowerCase());
     for (const [k, n] of t.teams.entries()) {
-      const names = $(`#sq-${k}`, body).value.split('\n').map(v => v.trim().replace(/\s+/g, ' ')).filter(Boolean);
-      if (names.length > max) { $('#sq-err', body).textContent = `${n}: at most ${max} players.`; return; }
+      const names = lines(`#sq-${k}`);
+      if (names.length > 11) { $('#sq-err', body).textContent = `${n}: at most 11 players${t.impact ? ' (substitutes go in the impact bench)' : ''}.`; return; }
       if (names.length === 1) { $('#sq-err', body).textContent = `${n}: add at least two players, or leave it empty.`; return; }
-      const plain = names.map(v => v.replace(ROLE, ' ').trim().toLowerCase());
+      const plain = plainOf(names);
       const dup = plain.find((v, j) => plain.indexOf(v) !== j);
       if (dup) { $('#sq-err', body).textContent = `${n}: “${dup}” is listed twice.`; return; }
+      if (t.impact) {
+        const bench = lines(`#bn-${k}`), bp = plainOf(bench);
+        const bdup = bp.find((v, j) => bp.indexOf(v) !== j) || bp.find(v => plain.includes(v));
+        if (bdup) { $('#sq-err', body).textContent = `${n}: “${bdup}” is on the bench twice or is also in the squad.`; return; }
+        if (bench.length > 7) { $('#sq-err', body).textContent = `${n}: the impact bench can have at most 7 players.`; return; }
+        if (bench.length && names.length) allB[n.toLowerCase()] = bench; else delete allB[n.toLowerCase()];
+      }
       if (names.length) all[n.toLowerCase()] = names; else delete all[n.toLowerCase()];
     }
     store.set('squads', all);
+    if (t.impact) store.set('benches', allB);
     closeModal(); RENDER.tournament(); toast('Squads saved');
   });
 }
@@ -861,7 +878,7 @@ function tournamentForm(t) {
       <div class="field"><div class="lab"><label for="tf-tb">Level on points</label></div><select id="tf-tb">${Object.entries(TIEBREAKS).map(([k, l]) => `<option value="${k}"${(t?.tiebreak || 'nrr') === k ? ' selected' : ''}>${esc(l[0].toUpperCase() + l.slice(1))}</option>`).join('')}</select></div>
       <div class="field"><div class="lab"><label for="tf-q">Teams that go through</label></div><input id="tf-q" type="text" inputmode="numeric" autocomplete="off" value="${esc(Number.isInteger(t?.qualify) ? t.qualify : '')}" placeholder="Top 4"></div>
     </div>
-    <label class="check" style="margin-top:12px"><input type="checkbox" id="tf-imp"${t?.impact ? ' checked' : ''}> Impact Player rule: each side can swap one player for a substitute during the match</label>
+    <label class="check" style="margin-top:12px"><input type="checkbox" id="tf-imp"${t?.impact ? ' checked' : ''}> Impact Player rule: each side can swap one player for a bench substitute during the match</label>
     <p class="hint">After a team's name you can add its home ground, like “Chennai | Chepauk”. The first team named in a fixture is at home. With “Super over decides”, the super-over winner of a tied match gets the points for a win. Knockouts always use the super over. Leave “Teams that go through” empty for the top 4 (top 2 with four teams or fewer), or enter 0 to hide the qualification card.</p>
     ${t ? '<p class="hint">Renaming a team here keeps its fixtures, as long as it stays on the same line. Removing a team removes its fixtures.</p>' : ''}
     <p class="err-text" id="tf-err"></p>

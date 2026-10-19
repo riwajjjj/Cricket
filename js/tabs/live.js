@@ -1000,8 +1000,9 @@ function coreImpact(team, out, inName) {
   const sq = sqOf(live, team);
   if (!sq) return 'that team has no squad to swap a player in';
   if (live.subs?.[team]) return `${live.teams[team]} have already used their impact player`;
-  const nm = String(inName || '').trim().replace(/\s+/g, ' ');
-  if (!nm) return 'type the impact player\'s name';
+  let nm = String(inName || '').trim().replace(/\s+/g, ' ');
+  if (!nm) return 'choose or type the impact player\'s name';
+  nm = (live.bench?.[team] || []).find(n => sameName(n, nm)) || nm; // a bench name keeps its spelling
   const xi = sq.length === 12 ? sq.slice(0, 11) : sq;
   const o = xi.find(n => sameName(n, out));
   if (!o) return 'pick a player from the playing XI';
@@ -1018,6 +1019,8 @@ function coreImpact(team, out, inName) {
   live.subs[team] = { out: o, in: nm };
   return null;
 }
+// The substitutes a team can bring on: its impact bench (and, in an older match, a pre-named 12th player).
+const benchList = team => { const sq = sqOf(live, team) || []; return [...(sq.length === 12 ? [sq[11]] : []), ...(live.bench?.[team] || [])].filter((n, k, a) => a.findIndex(x => sameName(x, n)) === k); };
 const impactAvail = () => !!live && live.impact && live.status !== 'done' && [0, 1].some(t => sqOf(live, t) && !live.subs?.[t]);
 function impactModal() {
   if (!impactAvail()) { toast('No impact player is left to bring on.'); return; }
@@ -1027,22 +1030,25 @@ function impactModal() {
     <div class="modal-block"${avail.length < 2 ? ' hidden' : ''}><p class="modal-sub">Which team</p><div class="seg" id="ip-team">${avail.map(t => `<button type="button" data-t="${t}" aria-pressed="${t === team}">${esc(live.teams[t])}</button>`).join('')}</div></div>
     <div id="ip-body" class="fields"></div>
     <p class="err-text" id="ip-err"></p>
-    <p class="hint">The player who goes off takes no further part: they can't bat, bowl or field. The new player can bat and bowl. A team gets one impact player. Undo reverses this.</p>
+    <p class="hint">The player who goes off takes no further part: they can't bat, bowl or field. The impact player can bat and bowl. Pick from the impact bench, or type a name if they aren't on it. A team gets one impact player. Undo reverses this.</p>
     <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Make the change</button></div>`);
   const draw = () => {
     const sq = sqOf(live, team), i = live.status === 'live' ? cur() : null;
     const xi = sq.length === 12 ? sq.slice(0, 11) : sq;
     const busy = n => i && ((i.bat === team && [i.striker, i.non].some(k => i.batters[k] && sameName(i.batters[k].name, n))) || (i.bat !== team && !i.needBowler && i.bowlers[i.bowler] && sameName(i.bowlers[i.bowler].name, n)));
     const opts = xi.filter(n => !busy(n)).map(n => ({ v: n, l: n + roleTag(live, team, n) }));
-    $('#ip-body', body).innerHTML = `${selectField('ip-out', 'Goes off', opts, opts[0]?.v)}${liveField('ip-in', 'Impact player coming on', sq.length === 12 ? sq[11] : '', { wide: true })}`;
+    const bn = benchList(team);
+    $('#ip-body', body).innerHTML = `${selectField('ip-out', 'Goes off', opts, opts[0]?.v)}${bn.length ? selectField('ip-pick', 'Impact player coming on', [...bn.map(n => ({ v: n, l: n })), { v: '', l: 'Someone else: type a name' }], bn[0]) : ''}
+      <div id="ip-in-w" style="grid-column:1/-1"${bn.length ? ' hidden' : ''}>${liveField('ip-in', bn.length ? 'Name' : 'Impact player coming on', '', { wide: true })}</div>`;
   };
+  body.addEventListener('change', e => { if (e.target.id === 'ip-pick') $('#ip-in-w', body).hidden = !!e.target.value; });
   draw();
   body.addEventListener('click', e => {
     const t = e.target.closest('[data-t]'), x = e.target.closest('[data-x]');
     if (t) { team = Number(t.dataset.t); body.querySelectorAll('[data-t]').forEach(b => b.setAttribute('aria-pressed', String(b === t))); draw(); return; }
     if (!x) return;
     if (x.dataset.x === 'cancel') { closeModal(); return; }
-    const out = $('#ip-out', body)?.value, nm = $('#ip-in', body)?.value;
+    const out = $('#ip-out', body)?.value, nm = $('#ip-pick', body)?.value || $('#ip-in', body)?.value;
     const err = act({ t: 'impact', team, out, inn: nm }, () => coreImpact(team, out, nm));
     if (err) { $('#ip-err', body).textContent = `Can't do that: ${err}.`; return; }
     closeModal();
@@ -1088,6 +1094,7 @@ export function undo() {
 
 export const liveField = (id, label, value, o = {}) => `<div class="field${o.wide ? ' wide' : ''}"><div class="lab"><label for="${id}">${esc(label)}</label></div><input id="${id}" type="text" value="${esc(value)}" autocomplete="off" spellcheck="false"${o.im ? ` inputmode="${o.im}"` : ''}${o.list ? ` list="${o.list}"` : ''} maxlength="${o.max || 30}"></div>`;
 
+const benchStore = () => { const v = store.get('benches', {}); return v && typeof v === 'object' ? v : {}; };
 const squadStore = () => { const v = store.get('squads', {}); return v && typeof v === 'object' ? v : {}; };
 // Squad lines can mark the captain with "(c)" and the wicketkeeper with "(wk)" or "†",
 // e.g. "Asif (c)", "Kiran (wk)", or both: "Kiran (c) (wk)".
@@ -1123,6 +1130,7 @@ export function setupHTML() {
   const tA = prefill?.ta || 'Falcons', tB = prefill?.tb || 'Rhinos';
   const rawA = saved[tA.toLowerCase()] || [], rawB = saved[tB.toLowerCase()] || [];
   const sqA = parseSquad(rawA.join('\n')), sqB = parseSquad(rawB.join('\n'));
+  const bens = benchStore(), benA = bens[tA.toLowerCase()] || [], benB = bens[tB.toLowerCase()] || [];
   const auto = (id, label, value) => liveField(id, label, value).replace('<input ', '<input data-auto="1" ');
   return `<div class="card">
     <h2 class="card-title">New match</h2>
@@ -1132,7 +1140,7 @@ export function setupHTML() {
       ${liveField('ls-tb', 'Bowling first', tB)}
       ${liveField('ls-ov', 'Overs per side', prefill?.overs ?? f.overs ?? '', { im: 'numeric', max: 3 })}
       ${selectField('ls-type', 'Match type', [{ v: 'limited', l: 'Limited overs' }, { v: 'test', l: 'Test: two innings each' }], f.key === 'Test' && !prefill ? 'test' : 'limited')}
-      ${selectField('ls-imp', 'Impact Player rule', [{ v: '0', l: 'Off' }, { v: '1', l: 'On: name the impact player when you swap' }], prefill?.impact ? '1' : '0')}
+      ${selectField('ls-imp', 'Impact Player rule', [{ v: '0', l: 'Off' }, { v: '1', l: 'On: choose the impact player from your bench' }], prefill?.impact ? '1' : '0')}
       ${selectField('ls-days', 'Days left when play starts (sets the follow-on)', [5, 4, 3, 2, 1].map(d => ({ v: String(d), l: `${d} day${d > 1 ? 's' : ''} · follow-on at ${FOLLOW_ON[d]}` })), '5')}
     </div>
     <div class="modal-actions" style="justify-content:flex-start;margin-top:10px"><button type="button" class="btn ghost sm" data-act="swap-teams">Swap batting order</button></div>
@@ -1141,9 +1149,12 @@ export function setupHTML() {
         <div class="lab"><label for="ls-sq${s}" id="ls-sq${s}-l">${esc(k ? tB : tA)} players</label></div>
         <textarea id="ls-sq${s}" rows="11" spellcheck="false" data-loaded="${(k ? rawB : rawA).length ? 1 : 0}" placeholder="Optional. One name per line, in batting order. Add (c) after the captain and (wk) after the wicketkeeper.">${esc((k ? rawB : rawA).join('\n'))}</textarea>
         <span class="sq-count" id="ls-sq${s}-c"></span>
+        <div id="ls-bn${s}-w"${prefill?.impact ? '' : ' hidden'} style="margin-top:12px"><div class="lab"><label for="ls-bn${s}">${esc(k ? tB : tA)} impact bench</label></div>
+          <textarea id="ls-bn${s}" rows="4" spellcheck="false" data-loaded="${(k ? benB : benA).length ? 1 : 0}" placeholder="Optional. The substitutes you may bring on, one per line (up to 7).">${esc((k ? benB : benA).join('\n'))}</textarea>
+          <span class="sq-count" id="ls-bn${s}-c"></span></div>
       </div>`).join('')}
     </div>
-    <p class="hint">With squads entered, new batters, bowlers and fielders are picked from a list during the match, and each team's size sets its players per side. With the Impact Player rule on, list the 11 who start. Use the “Impact player” button during the match to take one off and bring the substitute on: you type the new player's name then. Add (c) after the captain and (wk) after the wicketkeeper, for example “Asif (c)” or “Kiran (c) (wk)”. They're tagged on the scorecard, and stumpings pick the keeper automatically. Squads are remembered by team name for next time.</p>
+    <p class="hint">With squads entered, new batters, bowlers and fielders are picked from a list during the match, and each team's size sets its players per side. With the Impact Player rule on, list the 11 who start, and the substitutes you may bring on in the impact bench. During the match, the “Impact player” button takes one player off and brings a bench player on. Add (c) after the captain and (wk) after the wicketkeeper, for example “Asif (c)” or “Kiran (c) (wk)”. They're tagged on the scorecard, and stumpings pick the keeper automatically. Squads are remembered by team name for next time.</p>
     <div class="setup-grid" style="margin-top:14px">
       ${auto('ls-s', 'Striker', sqA[0] || 'Batter 1').replace('maxlength', 'list="ls-sqa-list" maxlength')}
       ${auto('ls-ns', 'Non-striker', sqA[1] || 'Batter 2').replace('maxlength', 'list="ls-sqa-list" maxlength')}
@@ -1158,7 +1169,7 @@ export function setupHTML() {
 }
 function swapSetupTeams() {
   const sw = (x, y) => { const a = $('#' + x), b = $('#' + y); if (!a || !b) return; const t = a.value; a.value = b.value; b.value = t; };
-  sw('ls-ta', 'ls-tb'); sw('ls-sqa', 'ls-sqb');
+  sw('ls-ta', 'ls-tb'); sw('ls-sqa', 'ls-sqb'); sw('ls-bna', 'ls-bnb');
   ['ls-s', 'ls-ns', 'ls-bw'].forEach(id => { const el = $('#' + id); if (el) { el.dataset.auto = '1'; el.value = id === 'ls-bw' ? 'Bowler 1' : id === 'ls-s' ? 'Batter 1' : 'Batter 2'; } });
   setupSync(null);
 }
@@ -1166,7 +1177,7 @@ function swapSetupTeams() {
 function setupSync(target) {
   const id = target?.id || '';
   const test = $('#ls-type')?.value === 'test';
-  const maxSq = $('#ls-imp')?.value === '1' ? 12 : 11;
+  const imp = $('#ls-imp')?.value === '1' && !test, maxSq = imp ? 12 : 11;
   const ovEl = $('#ls-ov'), daysWrap = $('#ls-days')?.closest('.field');
   if (ovEl) { ovEl.disabled = test; if (test) ovEl.value = ''; else if (!ovEl.value && id === 'ls-type') ovEl.value = String(fmt().overs ?? 20); }
   if (daysWrap) daysWrap.hidden = !test;
@@ -1182,10 +1193,25 @@ function setupSync(target) {
       else if (ta.dataset.loaded === '1' && !prev) { ta.value = ''; ta.dataset.loaded = '0'; }
     }
     if (id === 'ls-sq' + s) ta.dataset.loaded = '0';
+    const bt = $('#ls-bn' + s), bw = $('#ls-bn' + s + '-w');
+    if (bw) bw.hidden = !imp;
+    if (bt) {
+      if (id === teamId) {
+        const pb = benchStore()[team.toLowerCase()];
+        if (pb && (!bt.value.trim() || bt.dataset.loaded === '1')) { bt.value = pb.join('\n'); bt.dataset.loaded = '1'; }
+        else if (bt.dataset.loaded === '1' && !pb) { bt.value = ''; bt.dataset.loaded = '0'; }
+      }
+      if (id === 'ls-bn' + s) bt.dataset.loaded = '0';
+      $('label[for="ls-bn' + s + '"]').textContent = `${team || (s === 'a' ? 'Batting first' : 'Bowling first')} impact bench`;
+      const bn = parseSquad(bt.value), sqn = parseSquad(ta.value);
+      const bdup = bn.find((n, k) => bn.findIndex(x => sameName(x, n)) !== k), clash = bn.find(n => sqn.some(x => sameName(x, n)));
+      $('#ls-bn' + s + '-c').textContent = !bn.length ? 'No bench: you will type the impact player\'s name when you swap.' : bdup ? `“${bdup}” appears twice.` : clash ? `“${clash}” is already in the squad.` : bn.length > 7 ? `${bn.length} names: the most is 7.` : plural(bn.length, 'substitute');
+      $('#ls-bn' + s + '-c').classList.toggle('bad-text', !!bdup || !!clash || bn.length > 7);
+    }
     $('#ls-sq' + s + '-l').textContent = `${team || (s === 'a' ? 'Batting first' : 'Bowling first')} players`;
     const { names: sq, keeper, captain } = parseSquadFull(ta.value);
     const dup = sq.find((n, k) => sq.findIndex(x => sameName(x, n)) !== k);
-    $('#ls-sq' + s + '-c').textContent = !sq.length ? 'No squad: you will type names as you go.' : dup ? `“${dup}” appears twice.` : sq.length === 1 ? 'Add at least one more player, or leave it empty.' : sq.length > maxSq ? `${sq.length} names: the most is ${maxSq}.` : `${plural(sq.length, 'player')} · ${captain ? `captain: ${captain}` : 'no captain marked'} · ${keeper ? `keeper: ${keeper}` : 'no keeper marked'}`;
+    $('#ls-sq' + s + '-c').textContent = !sq.length ? 'No squad: you will type names as you go.' : dup ? `“${dup}” appears twice.` : sq.length === 1 ? 'Add at least one more player, or leave it empty.' : sq.length > maxSq ? `${sq.length} names: the most is ${imp ? 11 : maxSq}.` : `${plural(sq.length, 'player')} · ${captain ? `captain: ${captain}` : 'no captain marked'} · ${keeper ? `keeper: ${keeper}` : 'no keeper marked'}`;
     $('#ls-sq' + s + '-c').classList.toggle('bad-text', !!dup || sq.length === 1 || sq.length > maxSq);
     $(`#ls-sq${s}-list`).innerHTML = sq.map(n => `<option value="${esc(n)}"></option>`).join('');
     const fill = (fid, v) => { const el = $('#' + fid); if (el && el.dataset.auto === '1' && v) el.value = v; };
@@ -1212,9 +1238,26 @@ export function startMatch() {
   for (const [k, sq] of squads.entries()) {
     const team = k ? tb : ta;
     if (sq.length === 1) { err.textContent = `${team}: add at least two players, or leave the squad empty.`; return; }
-    if (sq.length > maxSq) { err.textContent = `${team}: a squad can have at most ${maxSq} players${impact ? ' (the XI and, if you know it, the impact player)' : ''}.`; return; }
+    if (sq.length > maxSq) { err.textContent = `${team}: a squad can have at most ${impact ? 11 : maxSq} players${impact ? ' (put the substitutes in the impact bench)' : ''}.`; return; }
     const dup = sq.find((n, j) => sq.findIndex(x => sameName(x, n)) !== j);
     if (dup) { err.textContent = `${team}: “${dup}” is listed twice.`; return; }
+  }
+  // The impact bench. An older 12-name squad has its 12th name moved onto the bench.
+  const bench = [[], []];
+  if (impact) {
+    for (const k of [0, 1]) {
+      const team = k ? tb : ta, own = parseSquad($(k ? '#ls-bnb' : '#ls-bna')?.value);
+      if (!squads[k].length) { if (own.length) { err.textContent = `${team}: add the squad before its impact bench.`; return; } continue; }
+      const extra = squads[k].length === 12 ? [squads[k][11]] : [];
+      if (extra.length) squads[k] = squads[k].slice(0, 11);
+      const all = [...extra, ...own];
+      const dupB = all.find((n, j) => all.findIndex(x => sameName(x, n)) !== j);
+      if (dupB) { err.textContent = `${team}: “${dupB}” is on the impact bench twice.`; return; }
+      const clash = all.find(n => squads[k].some(x => sameName(x, n)));
+      if (clash) { err.textContent = `${team}: “${clash}” is in the squad, so can't also be on the impact bench.`; return; }
+      if (all.length > 7) { err.textContent = `${team}: the impact bench can have at most 7 players.`; return; }
+      bench[k] = all;
+    }
   }
   if (!(squads[0].length && squads[1].length) && (!Number.isInteger(pps) || pps < 2 || pps > 11)) { err.textContent = 'Players per side must be from 2 to 11.'; return; }
   let s = g('ls-s') || 'Batter 1', ns = g('ls-ns') || 'Batter 2', bw = g('ls-bw') || 'Bowler 1';
@@ -1235,8 +1278,9 @@ export function startMatch() {
   if (squads[0].length) saved[ta.toLowerCase()] = markRoles(squads[0], full[0].keeper, full[0].captain);
   if (squads[1].length) saved[tb.toLowerCase()] = markRoles(squads[1], full[1].keeper, full[1].captain);
   store.set('squads', saved);
+  if (impact) { const bs = benchStore(); [[ta, 0], [tb, 1]].forEach(([n, k]) => { if (bench[k].length) bs[n.toLowerCase()] = bench[k]; else delete bs[n.toLowerCase()]; }); store.set('benches', bs); }
   live = { id: uid(), created: Date.now(), teams: [ta, tb], overs: ov, pps, squads: squads.map(q => q.length ? q : null), keepers: full.map(f => f.names.length ? f.keeper : null), captains: full.map(f => f.names.length ? f.captain : null), format: test ? 'Test' : fmt().label, status: 'live', inns: [newInnings(0, s, ns, bw, null)], result: null };
-  if (impact) live.impact = true;
+  if (impact) { live.impact = true; live.bench = bench.map(b => (b.length ? b : null)); }
   if (test) { live.matchType = 'test'; live.days = Number(g('ls-days')) || 5; live.followOn = FOLLOW_ON[live.days] || 200; live.clock = { day: 1, s: 0, start: [], dayStart: [] }; live.sessions = []; }
   if (prefill?.link) live.tournament = prefill.link;
   prefill = null;
