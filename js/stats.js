@@ -141,7 +141,12 @@ export function fixtureOutcome(t, f, byId) {
     const A = fix(f.manual.a), B = fix(f.manual.b);
     const winner = A.r > B.r ? 'a' : B.r > A.r ? 'b' : null;
     const sc = (x, s) => `${x} ${s.r}${s.w != null && s.w < 10 ? `/${s.w}` : ''} (${Math.floor(s.balls / 6)}${s.balls % 6 ? '.' + (s.balls % 6) : ''})`;
-    const text = winner ? `${winner === 'a' ? f.a : f.b} won · ${sc(f.a, A)} v ${sc(f.b, B)}` : `Tied · ${sc(f.a, A)} v ${sc(f.b, B)}`;
+    // When it's known who batted first (simulated results), give the margin the usual way.
+    const first = f.manual.first === 'a' || f.manual.first === 'b' ? f.manual.first : null;
+    const W = winner === 'a' ? A : B, L = winner === 'a' ? B : A;
+    const margin = !winner || !first ? '' : winner === first ? ` by ${W.r - L.r} run${W.r - L.r === 1 ? '' : 's'}` : ` by ${10 - (W.w ?? 0)} wicket${10 - (W.w ?? 0) === 1 ? '' : 's'}`;
+    const order = first === 'b' ? `${sc(f.b, B)} v ${sc(f.a, A)}` : `${sc(f.a, A)} v ${sc(f.b, B)}`;
+    const text = winner ? `${winner === 'a' ? f.a : f.b} won${margin} · ${order}` : `Tied · ${order}`;
     return { a: A, b: B, winner, so: winner == null ? soOf(f) : null, text };
   }
   return null;

@@ -24,7 +24,8 @@ const table = t => pointsTable(t, finishedMatches());
 const signed = v => v == null ? '—' : (v > 0.0005 ? '+' : '') + nf(v, 3);
 
 /* ---------- Knockouts ---------- */
-const STAGE = { SF1: 'Semi-final 1', SF2: 'Semi-final 2', F: 'Final' };
+const STAGE = { SF1: 'Semi-final 1', SF2: 'Semi-final 2', Q1: 'Qualifier 1', EL: 'Eliminator', Q2: 'Qualifier 2', F: 'Final' };
+const KO_ORDER = ['Q1', 'EL', 'SF1', 'SF2', 'Q2', 'F'];
 const ordN = k => (['1st', '2nd', '3rd'][k - 1] || `${k}th`);
 // How many teams go through from the table: set in the tournament, otherwise top 4 (or top 2 for small groups).
 const qualifyN = t => (Number.isInteger(t.qualify) ? t.qualify : t.teams.length > 4 ? 4 : t.teams.length > 2 ? 2 : 0);
@@ -41,16 +42,65 @@ function koWinner(t, f, byId) {
   const hi = (f.seedA ?? 99) <= (f.seedB ?? 99) ? f.a : f.b;
   return { team: hi, how: `goes through as the higher-placed side (${o.nr ? 'no result' : 'tied'})` };
 }
-// Until the final is played, its teams follow the semi-final results.
+// A knockout slot filled from an earlier match: "SF1" or "W:Q1" is that match's winner, "L:Q1" its loser.
+function fromRef(t, ref, byId) {
+  const [take, s] = ref.includes(':') ? ref.split(':') : ['W', ref];
+  const f = t.fixtures.find(x => x.stage === s);
+  const team = f && koWinner(t, f, byId)?.team;
+  if (!team) return null;
+  return take === 'L' ? (team === f.a ? f.b : f.a) : team;
+}
+// Until they are played, later knockout matches (Qualifier 2, the final) follow the earlier results.
 function syncFinal(t, byId) {
-  const fin = t.fixtures.find(f => f.stage === 'F' && Array.isArray(f.from));
-  if (!fin || isPlayed(fin)) return false;
-  const [a, b] = fin.from.map(s => { const sf = t.fixtures.find(f => f.stage === s); return (sf && koWinner(t, sf, byId)?.team) || null; });
-  if (fin.a === a && fin.b === b) return false;
-  const seedOf = n => { const sf = n && t.fixtures.find(f => f.stage && f.stage !== 'F' && (f.a === n || f.b === n)); return sf ? (sf.a === n ? sf.seedA : sf.seedB) : null; };
-  fin.a = a; fin.b = b; fin.seedA = seedOf(a); fin.seedB = seedOf(b);
+  let changed = false;
+  const seedOf = n => { if (!n) return null; for (const f of t.fixtures) { if (!f.stage) continue; if (f.a === n && f.seedA != null) return f.seedA; if (f.b === n && f.seedB != null) return f.seedB; } return null; };
+  KO_ORDER.forEach(s => {
+    const f = t.fixtures.find(x => x.stage === s && Array.isArray(x.from));
+    if (!f || isPlayed(f)) return;
+    const [a, b] = f.from.map(r => fromRef(t, r, byId));
+    if (f.a === a && f.b === b) return;
+    f.a = a; f.b = b; f.seedA = a ? seedOf(a) : null; f.seedB = b ? seedOf(b) : null;
+    changed = true;
+  });
+  return changed;
+}
+
+/* ---------- Simulated results ----------
+   For trying out a tournament without scoring every match. Each team gets a hidden strength when the
+   first match is simulated, so some sides are better than others, like a real league. Scores follow
+   typical totals for the overs (about 165 in a T20, 280 in a 50-over match). */
+const normal = () => { let u = 0; while (!u) u = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random()); };
+const rint = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+function strengthOf(t, team) {
+  t.sim = t.sim || {};
+  if (t.sim[team] == null) t.sim[team] = Math.round(normal() * 50) / 100; // about −1 to +1
+  return t.sim[team];
+}
+function simulateFixture(t, f) {
+  if (!f.a || !f.b || isPlayed(f)) return false;
+  const O = t.overs || 20, Q = O * 6;
+  const rpo = O <= 10 ? 10.5 - (O - 5) * 0.2 : O <= 20 ? 9.5 - (O - 10) * 0.125 : O <= 50 ? 8.25 - (O - 20) * 0.088 : 5.6;
+  const mean = rpo * O;
+  const first = Math.random() < 0.5 ? 'a' : 'b', second = first === 'a' ? 'b' : 'a';
+  const sA = strengthOf(t, f[first]), sB = strengthOf(t, f[second]);
+  const pFirst = 1 / (1 + Math.exp(-(sA - sB) * 1.6));
+  const u = Math.random();
+  const res = u < 0.012 ? 'tie' : u < 0.012 + pFirst * 0.988 ? 'first' : 'second';
+  const r1 = Math.max(Math.round(mean * 0.45), Math.round(mean * (1 + 0.04 * sA) + normal() * mean * 0.14));
+  const inn1 = Math.random() < 0.25 ? { r: r1, w: 10, balls: Q - rint(0, Math.floor(Q * 0.2)), ao: true } : { r: r1, w: rint(2, 9), balls: Q, ao: false };
+  let inn2;
+  if (res === 'tie') inn2 = { r: r1, w: rint(5, 9), balls: Q, ao: false };
+  else if (res === 'first') {
+    const margin = Math.min(r1, 1 + Math.round(Math.abs(normal()) * mean * 0.13));
+    inn2 = Math.random() < 0.5 ? { r: r1 - margin, w: 10, balls: Q - rint(1, Math.floor(Q * 0.3)), ao: true } : { r: r1 - margin, w: rint(3, 9), balls: Q, ao: false };
+  } else inn2 = { r: r1 + rint(1, 4), w: Math.random() < 0.04 ? 0 : rint(1, 8), balls: Q - Math.floor(Math.random() ** 2 * Q * 0.2), ao: false };
+  f.manual = { [first]: inn1, [second]: inn2, first, sim: true };
+  f.matchId = null; f.nr = false;
+  // A tie goes to a super over in knockouts, or when the tournament lets the super over decide.
+  f.so = res === 'tie' && (f.stage || t.tieRule === 'so') ? (Math.random() < 0.5 ? 'a' : 'b') : null;
   return true;
 }
+const busy = (t, f) => live && live.tournament && live.tournament.tid === t.id && live.tournament.fid === f.id && live.status !== 'done';
 
 /* ---------- Render ---------- */
 function fxRow(t, f, label, byId, caption = '') {
@@ -58,20 +108,21 @@ function fxRow(t, f, label, byId, caption = '') {
   const o = known ? outcome(t, f, byId) : null;
   const pending = live && live.tournament && live.tournament.tid === t.id && live.tournament.fid === f.id && live.status !== 'done';
   let status, actions = '';
-  if (!known) status = '<span class="dim">Waiting for the semi-final results</span>';
+  if (!known) status = '<span class="dim">Waiting for earlier knockout results</span>';
   else if (o && !o.error) {
     const tie = !o.nr && !o.winner;
     const soTxt = o.so ? ` · ${esc(o.so === 'a' ? f.a : f.b)} won the super over` : '';
     const kw = f.stage && f.stage !== 'F' ? koWinner(t, f, byId) : null;
     const through = kw && kw.how && kw.team && !o.so ? ` · ${esc(kw.team)} ${esc(kw.how)}` : '';
-    status = `<span class="${o.nr ? 'dim' : ''}">${esc(o.text || '')}${soTxt}${through}</span>`;
+    status = `<span class="${o.nr ? 'dim' : ''}">${esc(o.text || '')}${soTxt}${through}</span>${f.manual?.sim ? ' <span class="chip r1" style="font-size:.65rem">Simulated</span>' : ''}`;
     actions = `${tie ? `<button type="button" class="btn ghost sm" data-tr="so" data-f="${f.id}">${o.so ? 'Change super over' : 'Super over winner'}</button>` : ''}${o.linked ? `<button type="button" class="btn ghost sm" data-tr="card" data-f="${f.id}">Scorecard</button>` : ''}<button type="button" class="btn ghost sm" data-tr="clear" data-f="${f.id}">Clear result</button>`;
   } else {
     status = pending ? '<span class="badge live" style="font-size:.65rem">Being scored</span>' : o?.error ? `<span class="neg">${esc(o.error)}</span>` : '<span class="dim">Not played yet</span>';
     actions = `<button type="button" class="btn sm" data-tr="score" data-f="${f.id}">${pending ? 'Open scorer' : 'Score live'}</button>
       <button type="button" class="btn ghost sm" data-tr="manual" data-f="${f.id}">Enter result</button>
       <button type="button" class="btn ghost sm" data-tr="link" data-f="${f.id}">Link a saved match</button>
-      <button type="button" class="btn ghost sm" data-tr="nr" data-f="${f.id}">No result</button>`;
+      <button type="button" class="btn ghost sm" data-tr="nr" data-f="${f.id}">No result</button>
+      ${pending ? '' : `<button type="button" class="btn ghost sm" data-tr="sim" data-f="${f.id}">Simulate</button>`}`;
   }
   const del = f.stage ? '' : `<button type="button" class="row-del" data-tr="remove" data-f="${f.id}" aria-label="Remove fixture"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
   return `<div class="fx-row"><div class="fx-main"><span class="fx-no${label.length > 2 ? ' wide' : ''}">${esc(label)}</span><div>${caption ? `<div class="fx-cap">${esc(caption)}</div>` : ''}<div class="fx-teams">${esc(f.a || 'TBC')} <span class="dim">v</span> ${esc(f.b || 'TBC')}</div><div class="fx-status">${status}</div></div></div>
@@ -113,22 +164,24 @@ function qualCard(t, N) {
 }
 
 function koCard(t, ko, byId) {
-  const list = ['SF1', 'SF2', 'F'].map(s => ko.find(f => f.stage === s)).filter(Boolean);
+  const list = KO_ORDER.map(s => ko.find(f => f.stage === s)).filter(Boolean);
+  const ipl = ko.some(f => f.stage === 'Q1');
+  const left = list.some(f => !isPlayed(f));
   const fin = ko.find(f => f.stage === 'F');
   const fw = fin ? koWinner(t, fin, byId) : null;
   const banner = fw ? (fw.team
-    ? `<div class="champ"><span>Champions</span><b>${esc(fw.team)}</b>${fw.how ? `<em>${esc(fw.how)}</em>` : ''}</div>`
-    : `<div class="champ"><span>Final ${esc(fw.how)}</span><b>Trophy shared</b><em>Record a super over winner to decide it</em></div>`) : '';
+      ? `<div class="champ"><span>Champions</span><b>${esc(fw.team)}</b>${fw.how ? `<em>${esc(fw.how)}</em>` : ''}</div>`
+      : `<div class="champ"><span>Final ${esc(fw.how)}</span><b>Trophy shared</b><em>Record a super over winner to decide it</em></div>`) : '';
   const cap = f => {
     const seeds = f.seedA && f.seedB ? ` · ${ordN(f.seedA)} v ${ordN(f.seedB)}` : '';
     return STAGE[f.stage] + seeds;
   };
   return `<div class="card">
     <div class="sc-head" style="margin-bottom:12px"><h2 class="card-title" style="margin:0">Knockouts</h2>
-      <div class="head-actions" style="width:auto"><button type="button" class="btn ghost sm danger" data-tr="ko-del">Remove knockouts</button></div></div>
+      <div class="head-actions" style="width:auto">${left ? '<button type="button" class="btn ghost sm" data-tr="sim-ko">Simulate knockouts</button>' : ''}<button type="button" class="btn ghost sm danger" data-tr="ko-del">Remove knockouts</button></div></div>
     ${banner}
     ${list.map(f => fxRow(t, f, f.stage, byId, cap(f))).join('')}
-    <p class="hint">Knockout matches don't count in the points table. A tied semi-final without a super over sends the higher-placed side through.</p>
+    <p class="hint">${ipl ? 'The winner of Qualifier 1 goes straight to the final; the loser gets a second chance in Qualifier 2 against the winner of the Eliminator. ' : ''}Knockout matches don't count in the points table. A tied knockout without a super over sends the higher-placed side through.</p>
   </div>`;
 }
 
@@ -160,6 +213,8 @@ RENDER.tournament = function renderTournament() {
   const bowls = top({ ok: r => r.bowl.wkts > 0, sort: (a, b) => b.bowl.wkts - a.bowl.wkts || a.bowl.runs - b.bowl.runs });
   const fxs = league.map((f, k) => fxRow(t, f, String(k + 1), byId)).join('');
   const N = qualifyN(t);
+  const leagueLeft = league.filter(f => f.a && f.b && !isPlayed(f) && !busy(t, f)).length;
+  const anySim = t.fixtures.some(f => f.manual?.sim);
   const tbTxt = TIEBREAKS[t.tiebreak] || TIEBREAKS.nrr;
   main.innerHTML = `
     <div class="card">
@@ -173,8 +228,9 @@ RENDER.tournament = function renderTournament() {
     ${ko.length ? koCard(t, ko, byId) : ''}
     <div class="card">
       <div class="sc-head" style="margin-bottom:12px"><h2 class="card-title" style="margin:0">${ko.length ? 'League fixtures' : 'Fixtures and results'}</h2>
-        <div class="head-actions" style="width:auto"><button type="button" class="btn ghost sm" data-tr="rr">Add round-robin fixtures</button><button type="button" class="btn ghost sm" data-tr="addfx">Add a fixture</button>${ko.length || t.teams.length < 2 ? '' : '<button type="button" class="btn ghost sm" data-tr="ko">Set up knockouts</button>'}</div></div>
-      ${fxs || '<p class="hint" style="margin:0">No fixtures yet. “Add round-robin fixtures” creates one match between every pair of teams.</p>'}
+        <div class="head-actions" style="width:auto"><button type="button" class="btn ghost sm" data-tr="rr">Add round-robin fixtures</button><button type="button" class="btn ghost sm" data-tr="addfx">Add a fixture</button>${leagueLeft ? `<button type="button" class="btn ghost sm" data-tr="sim-all">Simulate ${leagueLeft === league.length ? 'the league' : `the other ${leagueLeft}`}</button>` : ''}${anySim ? '<button type="button" class="btn ghost sm danger" data-tr="sim-clear">Clear simulated results</button>' : ''}${ko.length || t.teams.length < 2 ? '' : '<button type="button" class="btn ghost sm" data-tr="ko">Set up knockouts</button>'}</div></div>
+      ${fxs || '<p class="hint" style="margin:0">No fixtures yet. “Add round-robin fixtures” creates the league: every pair of teams once or twice, or the IPL format with ten teams.</p>'}
+      ${fxs ? '<p class="hint">“Simulate” makes up a realistic result instead of scoring the match, which is handy for trying out a tournament. Simulated results are marked and can be cleared; scored matches are never touched.</p>' : ''}
     </div>
     <div class="grid-2">
       <div class="card"><h2 class="card-title">Most runs</h2>${bats.length ? `<table class="tbl"><tbody>${bats.map((r, k) => `<tr><td class="dim">${k + 1}</td><td>${esc(r.name)}<div class="dim" style="font-size:.78rem">${esc([...r.teams].join(', '))}</div></td><td class="num"><b>${r.bat.runs}</b></td><td class="num dim">${r.bat.balls ? nf(r.bat.runs / r.bat.balls * 100, 1) : '—'} SR</td></tr>`).join('')}</tbody></table>` : '<p class="hint" style="margin:0">Appears once a scored match is linked.</p>'}</div>
@@ -349,16 +405,18 @@ function koForm(t) {
   if (rows.length < 2) { toast('Add at least two teams first'); return; }
   const pendingN = t.fixtures.filter(f => !f.stage && !outcome(t, f, byId)).length;
   const canSemis = rows.length >= 4;
-  let type = canSemis ? 'semis' : 'final';
+  let type = canSemis ? (t.koType === 'ipl' ? 'ipl' : 'semis') : 'final';
   const body = openModal('Set up knockouts', `
     <p class="hint" style="margin:-6px 0 12px">Seeds come from the points table as it stands now.${pendingN ? ` ${plural(pendingN, 'league fixture is', 'league fixtures are')} still to be played, so you may want to wait until the league is finished.` : ''}</p>
-    <div class="seg" role="group" aria-label="Format">${canSemis ? '<button type="button" data-ko="semis" aria-pressed="true">Semi-finals and a final</button>' : ''}<button type="button" data-ko="final" aria-pressed="${!canSemis}">Final only</button></div>
+    <div class="seg" role="group" aria-label="Format">${canSemis ? '<button type="button" data-ko="semis" aria-pressed="true">Semi-finals and a final</button><button type="button" data-ko="ipl" aria-pressed="false">IPL playoffs</button>' : ''}<button type="button" data-ko="final" aria-pressed="${!canSemis}">Final only</button></div>
     <p class="hint" id="ko-desc"></p>
     <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Create knockouts</button></div>`);
   const desc = () => {
-    $('#ko-desc', body).textContent = type === 'semis'
-      ? `Semi-final 1: ${rows[0].team} (1st) v ${rows[3].team} (4th). Semi-final 2: ${rows[1].team} (2nd) v ${rows[2].team} (3rd). The winners meet in the final.`
-      : `Final: ${rows[0].team} (1st) v ${rows[1].team} (2nd).`;
+    $('#ko-desc', body).textContent = type === 'ipl'
+        ? `Qualifier 1: ${rows[0].team} (1st) v ${rows[1].team} (2nd), the winner goes to the final. Eliminator: ${rows[2].team} (3rd) v ${rows[3].team} (4th), the loser is out. Qualifier 2: the loser of Qualifier 1 v the winner of the Eliminator. Final: the winners of Qualifier 1 and Qualifier 2.`
+        : type === 'semis'
+            ? `Semi-final 1: ${rows[0].team} (1st) v ${rows[3].team} (4th). Semi-final 2: ${rows[1].team} (2nd) v ${rows[2].team} (3rd). The winners meet in the final.`
+            : `Final: ${rows[0].team} (1st) v ${rows[1].team} (2nd).`;
     body.querySelectorAll('[data-ko]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.ko === type)));
   };
   desc();
@@ -369,7 +427,12 @@ function koForm(t) {
     if (x.dataset.x === 'cancel') { closeModal(); return; }
     const fx = (stage, a, b, seedA, seedB, extra = {}) => ({ id: uid(), stage, a, b, seedA, seedB, matchId: null, manual: null, nr: false, ...extra });
     t.fixtures = t.fixtures.filter(f => !f.stage);
-    if (type === 'semis') {
+    t.koType = type;
+    if (type === 'ipl') {
+      t.fixtures.push(fx('Q1', rows[0].team, rows[1].team, 1, 2), fx('EL', rows[2].team, rows[3].team, 3, 4),
+          fx('Q2', null, null, null, null, { from: ['L:Q1', 'W:EL'] }), fx('F', null, null, null, null, { from: ['W:Q1', 'W:Q2'] }));
+      if (!Number.isInteger(t.qualify) || !t.qualify) t.qualify = 4;
+    } else if (type === 'semis') {
       t.fixtures.push(fx('SF1', rows[0].team, rows[3].team, 1, 4), fx('SF2', rows[1].team, rows[2].team, 2, 3), fx('F', null, null, null, null, { from: ['SF1', 'SF2'] }));
       if (!Number.isInteger(t.qualify) || !t.qualify) t.qualify = 4;
     } else {
@@ -377,7 +440,54 @@ function koForm(t) {
       if (!Number.isInteger(t.qualify) || !t.qualify) t.qualify = 2;
     }
     update(t); closeModal(); RENDER.tournament();
-    toast(type === 'semis' ? 'Semi-finals and final added' : 'Final added');
+    toast(type === 'ipl' ? 'IPL playoffs added' : type === 'semis' ? 'Semi-finals and final added' : 'Final added');
+  });
+}
+
+// League fixtures: every pair once, every pair twice (home and away), or the IPL's 14-match format for ten teams.
+function rrForm(t) {
+  const n = t.teams.length, ten = n === 10;
+  const body = openModal('Add league fixtures', `
+    <div class="seg" role="group" aria-label="Format" style="flex-wrap:wrap">
+      <button type="button" data-rr="1" aria-pressed="true">Play each other once</button>
+      <button type="button" data-rr="2" aria-pressed="false">Twice (home and away)</button>
+      ${ten ? '<button type="button" data-rr="ipl" aria-pressed="false">IPL format</button>' : ''}
+    </div>
+    <p class="hint" id="rr-desc"></p>
+    <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Add fixtures</button></div>`);
+  let mode = '1';
+  const desc = () => {
+    $('#rr-desc', body).textContent = mode === 'ipl'
+        ? `Two groups of five, in the order the teams are listed: ${t.teams.slice(0, 5).join(', ')} and ${t.teams.slice(5).join(', ')}. Each team plays its own group twice, the team in the same place in the other group twice, and the other four once: 14 matches each, 70 in all.`
+        : mode === '2' ? `Every team plays every other team twice: ${2 * (n - 1)} matches each, ${n * (n - 1)} in all.` : `Every team plays every other team once: ${n - 1} matches each, ${n * (n - 1) / 2} in all.`;
+    body.querySelectorAll('[data-rr]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.rr === mode)));
+  };
+  desc();
+  body.addEventListener('click', e => {
+    const k = e.target.closest('[data-rr]'), x = e.target.closest('[data-x]');
+    if (k) { mode = k.dataset.rr; desc(); return; }
+    if (!x) return;
+    if (x.dataset.x === 'cancel') { closeModal(); return; }
+    // How many times each pair should meet.
+    const times = (i, j) => {
+      if (mode !== 'ipl') return Number(mode);
+      const gi = i < 5 ? 0 : 1, gj = j < 5 ? 0 : 1;
+      return gi === gj || i % 5 === j % 5 ? 2 : 1;
+    };
+    const pairs = [];
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) pairs.push([i, j]);
+    let added = 0;
+    // First legs for every pair, then the return legs, so each team's matches are spread out.
+    [1, 2].forEach(leg => pairs.forEach(([i, j]) => {
+      if (times(i, j) < leg) return;
+      const A = t.teams[i], B = t.teams[j];
+      const have = t.fixtures.filter(y => !y.stage && ((same(y.a, A) && same(y.b, B)) || (same(y.a, B) && same(y.b, A)))).length;
+      if (have >= leg) return;
+      t.fixtures.push(leg === 1 ? { id: uid(), a: A, b: B, matchId: null, manual: null, nr: false } : { id: uid(), a: B, b: A, matchId: null, manual: null, nr: false });
+      added++;
+    }));
+    update(t); closeModal(); RENDER.tournament();
+    toast(added ? `${plural(added, 'fixture')} added` : 'Those fixtures are already there');
   });
 }
 
@@ -409,16 +519,33 @@ $('#tr-main').addEventListener('click', async e => {
   if (!t) return;
   const f = t.fixtures.find(x => x.id === b.dataset.f);
   switch (a) {
-    case 'rr': {
-      let added = 0;
-      for (let i = 0; i < t.teams.length; i++) for (let j = i + 1; j < t.teams.length; j++) {
-        const A = t.teams[i], B = t.teams[j];
-        if (!t.fixtures.some(x => !x.stage && ((same(x.a, A) && same(x.b, B)) || (same(x.a, B) && same(x.b, A))))) { t.fixtures.push({ id: uid(), a: A, b: B, matchId: null, manual: null, nr: false }); added++; }
-      }
+    case 'rr': rrForm(t); break;
+    case 'sim': if (f && simulateFixture(t, f)) { syncFinal(t, new Map(finishedMatches().map(m => [m.id, m]))); update(t); RENDER.tournament(); toast('Result simulated'); } break;
+    case 'sim-all': {
+      let n = 0;
+      t.fixtures.forEach(x => { if (!x.stage && !busy(t, x) && simulateFixture(t, x)) n++; });
       update(t); RENDER.tournament();
-      toast(added ? `${plural(added, 'fixture')} added` : 'Every pair of teams already has a fixture');
+      toast(n ? `${plural(n, 'match', 'matches')} simulated` : 'Nothing left to simulate');
       break;
     }
+    case 'sim-ko': {
+      const byId = new Map(finishedMatches().map(m => [m.id, m]));
+      let n = 0;
+      // One round at a time, so each later match picks up the teams that came through.
+      KO_ORDER.forEach(s => { syncFinal(t, byId); const x = t.fixtures.find(y => y.stage === s); if (x && !busy(t, x) && simulateFixture(t, x)) n++; });
+      syncFinal(t, byId);
+      update(t); RENDER.tournament();
+      toast(n ? `${plural(n, 'knockout match', 'knockout matches')} simulated` : 'Nothing left to simulate');
+      break;
+    }
+    case 'sim-clear':
+      if (await confirmBox('Clear simulated results?', 'Every simulated result goes back to not played. Scored and typed-in results stay.', 'Clear', true)) {
+        t.fixtures.forEach(x => { if (x.manual?.sim) { x.manual = null; x.so = null; } });
+        t.sim = {};
+        syncFinal(t, new Map(finishedMatches().map(m => [m.id, m])));
+        update(t); RENDER.tournament(); toast('Simulated results cleared');
+      }
+      break;
     case 'addfx': {
       const opts = t.teams.map(n => `<option>${esc(n)}</option>`).join('');
       const body = openModal('Add a fixture', `<div class="fields"><div class="field"><div class="lab"><label for="af-a">Team</label></div><select id="af-a">${opts}</select></div><div class="field"><div class="lab"><label for="af-b">Against</label></div><select id="af-b">${opts}</select></div></div>
