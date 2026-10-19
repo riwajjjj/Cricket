@@ -705,6 +705,10 @@ function renameInSquad(team, old, nm) {
   if (k !== -1) sq[k] = nm;
   if (live.keepers?.[team] && sameName(live.keepers[team], old)) live.keepers[team] = nm;
   if (live.captains?.[team] && sameName(live.captains[team], old)) live.captains[team] = nm;
+  const u = live.subs?.[team];
+  if (u) { if (sameName(u.out, old)) u.out = nm; if (sameName(u.in, old)) u.in = nm; }
+  const bn = live.bench?.[team];
+  if (bn) { const j = bn.findIndex(x => sameName(x, old)); if (j !== -1) bn[j] = nm; }
   if (replaying) return;
   const saved = squadStore(), key = live.teams[team].toLowerCase(); // keep the remembered squad in step
   if (saved[key]) {
@@ -717,8 +721,9 @@ function renameInSquad(team, old, nm) {
   }
 }
 // Rename one player of a team everywhere: as a batter, as a bowler, and in dismissals they took part in.
+const swapName = (s, from, to) => String(s).replace(new RegExp(`(^|[^\\w])${escRe(from)}(?=$|[^\\w])`, 'g'), (m, pre) => pre + to);
 function renamePlayer(team, old, nm) {
-  const swap = (s, from, to) => s.replace(new RegExp(`(^|[^\\w])${escRe(from)}(?=$|[^\\w])`, 'g'), (m, pre) => pre + to);
+  const swap = swapName;
   live.inns.forEach(inn => {
     if (inn.bat === team) {
       inn.batters.forEach(b => { if (sameName(b.name, old)) b.name = nm; });
@@ -735,8 +740,13 @@ function renamePlayer(team, old, nm) {
   renameInSquad(team, old, nm);
 }
 function coreRename(names) {
-  names.teams.forEach((t, k) => { if (t) live.teams[k] = t; });
+  names.teams.forEach((t, k) => {
+    if (!t || t === live.teams[k]) return;
+    if (live.result) live.result = swapName(live.result, live.teams[k], t); // "Falcons won by 5 runs"
+    live.teams[k] = t;
+  });
   const pairs = [];
+  (names.others || []).forEach(([team, old, nm]) => { if (nm && old && nm !== old) pairs.push([team, old, nm]); }); // squad players who didn't bat or bowl
   live.inns.forEach((inn, k) => {
     (names.bowlers[k] || []).forEach((nm, j) => { const b = inn.bowlers[j]; if (b && nm && nm !== b.name) pairs.push([1 - inn.bat, b.name, nm]); });
     (names.batters[k] || []).forEach((nm, j) => { const b = inn.batters[j]; if (b && nm && nm !== b.name) pairs.push([inn.bat, b.name, nm]); });
@@ -744,7 +754,29 @@ function coreRename(names) {
   pairs.forEach(([team, old, nm]) => renamePlayer(team, old, nm));
   return null;
 }
-export function renameAll(names) { act({ t: 'rename', names }, () => coreRename(names)); }
+export function renameAll(names) {
+  act({ t: 'rename', names }, () => coreRename(names));
+  if (live.status === 'done') saveMatch(true); // keep the copy in Saved in step
+}
+// Rename players or teams in a match kept in Saved. The change is added to the match's action log,
+// so editing a ball later replays it too.
+export function renameSavedMatch(id, done) {
+  const list = store.get('matches', []);
+  const k = Array.isArray(list) ? list.findIndex(x => x.id === id) : -1;
+  if (k < 0) return;
+  renameModal(list[k].data, names => {
+    const real = live;
+    live = JSON.parse(JSON.stringify(list[k].data));
+    coreRename(names);
+    if (Array.isArray(live.log)) live.log.push({ t: 'rename', names });
+    const data = live;
+    live = real;
+    list[k] = { ...list[k], data, title: `${data.teams[0]} v ${data.teams[1]}`, result: data.result || list[k].result, summary: data.inns.map(i => `${data.teams[i.bat]} ${i.runs}/${i.wkts} (${fmtOvers(i.balls)})`).join(' · ') };
+    store.set('matches', list);
+    if (live && live.id === id) { live = JSON.parse(JSON.stringify(data)); undoStack = []; saveLive(); renderLiveAll(); }
+    done && done();
+  });
+}
 
 export const isTest = (m = live) => !!m && m.matchType === 'test';
 const ORD = ['1st', '2nd', '3rd', '4th'];
@@ -1776,7 +1808,7 @@ export function renderLiveAll(animateLast = false) {
     return;
   }
   main.innerHTML = live.status === 'live' ? liveHTML(animateLast) : live.status === 'break' ? breakHTML() : doneHTML();
-  actions.innerHTML = `${live.status !== 'done' ? `<button type="button" class="btn ghost" data-act="save-match">Save progress</button>` : ''}<button type="button" class="btn ghost danger" data-act="new">New match</button>`;
+  actions.innerHTML = `${live.status !== 'done' ? `<button type="button" class="btn ghost" data-act="save-match">Save progress</button>` : ''}${live.status !== 'live' ? '<button type="button" class="btn ghost" data-act="rename">Edit names</button>' : ''}<button type="button" class="btn ghost danger" data-act="new">New match</button>`;
   cards.innerHTML = (live.status !== 'live' ? commentaryCardHTML() : '') + daysHTML(live) + live.inns.map((_, k) => scorecardHTML(live, k)).join('');
   paintSituation();
   liveCharts(live);
@@ -2151,30 +2183,52 @@ function penaltyModal() {
   });
 }
 
-function renameModal() {
+function renameModal(m = live, onSave = names => renameAll(names)) {
   const inp = (id, v) => `<input id="${id}" type="text" maxlength="30" autocomplete="off" value="${esc(v)}" aria-label="Name">`;
+  // Squad players who never batted or bowled (fielders, the player replaced by the impact player) can be renamed too.
+  const others = [0, 1].map(t => {
+    const seen = new Set();
+    m.inns.forEach(inn => { (inn.bat === t ? inn.batters : inn.bowlers).forEach(b => seen.add(b.name.toLowerCase())); });
+    return (m.squads?.[t] || []).filter(n => !seen.has(n.toLowerCase()));
+  });
   const body = openModal('Edit names', `
-    <div class="modal-block"><p class="modal-sub">Teams</p><div class="fields">${live.teams.map((t, k) => `<div class="field">${inp(`rn-t${k}`, t)}</div>`).join('')}</div></div>
-    ${live.inns.map((inn, k) => `
-      <div class="modal-block"><p class="modal-sub">${esc(live.teams[inn.bat])} batters (innings ${k + 1})</p><div class="fields">${inn.batters.map((b, j) => `<div class="field">${inp(`rn-b${k}-${j}`, b.name)}</div>`).join('')}</div></div>
-      <div class="modal-block"><p class="modal-sub">${esc(live.teams[1 - inn.bat])} bowlers (innings ${k + 1})</p><div class="fields">${inn.bowlers.map((b, j) => `<div class="field">${inp(`rn-w${k}-${j}`, b.name)}</div>`).join('')}</div></div>`).join('')}
+    ${m.status === 'done' ? '<p class="hint" style="margin:-6px 0 12px">The match has finished: names change on the scorecard, in Saved and in player records. Scores stay as they are. If it’s a tournament match, keep the team names the same as in the tournament.</p>' : ''}
+    <div class="modal-block"><p class="modal-sub">Teams</p><div class="fields">${m.teams.map((t, k) => `<div class="field">${inp(`rn-t${k}`, t)}</div>`).join('')}</div></div>
+    ${m.inns.map((inn, k) => `
+      <div class="modal-block"><p class="modal-sub">${esc(m.teams[inn.bat])} batters (innings ${k + 1})</p><div class="fields">${inn.batters.map((b, j) => `<div class="field">${inp(`rn-b${k}-${j}`, b.name)}</div>`).join('')}</div></div>
+      <div class="modal-block"><p class="modal-sub">${esc(m.teams[1 - inn.bat])} bowlers (innings ${k + 1})</p><div class="fields">${inn.bowlers.map((b, j) => `<div class="field">${inp(`rn-w${k}-${j}`, b.name)}</div>`).join('')}</div></div>`).join('')}
+    ${others.map((list, t) => list.length ? `<div class="modal-block"><p class="modal-sub">Other ${esc(m.teams[t])} players</p><div class="fields">${list.map((n, j) => `<div class="field">${inp(`rn-o${t}-${j}`, n)}</div>`).join('')}</div></div>` : '').join('')}
+    <p class="hint">A player who batted and bowled only needs changing once: the new name is used everywhere, including dismissals they took part in.</p>
     <p class="err-text" id="rn-err"></p>
     <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Save names</button></div>`, { wide: true });
   body.addEventListener('click', e => {
     const x = e.target.closest('[data-x]');
     if (!x) return;
     if (x.dataset.x === 'cancel') { closeModal(); return; }
-    const val = id => ($('#' + id)?.value || '').trim();
-    const names = { teams: live.teams.map((_, k) => val(`rn-t${k}`)), batters: [], bowlers: [] };
-    live.inns.forEach((inn, k) => {
+    const val = id => ($('#' + id, body)?.value || '').trim().replace(/\s+/g, ' ');
+    const names = { teams: m.teams.map((_, k) => val(`rn-t${k}`)), batters: [], bowlers: [], others: [] };
+    m.inns.forEach((inn, k) => {
       names.batters[k] = inn.batters.map((_, j) => val(`rn-b${k}-${j}`));
       names.bowlers[k] = inn.bowlers.map((_, j) => val(`rn-w${k}-${j}`));
     });
+    others.forEach((list, t) => list.forEach((n, j) => { const v = val(`rn-o${t}-${j}`); if (v && v !== n) names.others.push([t, n, v]); }));
     const dupe = list => list.filter(Boolean).map(s => s.toLowerCase()).some((s, k, a) => a.indexOf(s) !== k);
-    if (names.teams[0] && names.teams[1] && names.teams[0].toLowerCase() === names.teams[1].toLowerCase()) { $('#rn-err').textContent = 'The two teams need different names.'; return; }
-    if (names.bowlers.some(dupe) || names.batters.some(dupe)) { $('#rn-err').textContent = 'Two players in the same list have the same name.'; return; }
+    if (names.teams[0] && names.teams[1] && names.teams[0].toLowerCase() === names.teams[1].toLowerCase()) { $('#rn-err', body).textContent = 'The two teams need different names.'; return; }
+    if (names.bowlers.some(dupe) || names.batters.some(dupe)) { $('#rn-err', body).textContent = 'Two players in the same list have the same name.'; return; }
+    // A new name must not belong to someone else in the same team.
+    for (const t of [0, 1]) {
+      const now = new Map();
+      m.inns.forEach((inn, k) => {
+        if (inn.bat === t) inn.batters.forEach((b, j) => now.set(b.name.toLowerCase(), names.batters[k][j] || b.name));
+        else inn.bowlers.forEach((b, j) => { if (!now.has(b.name.toLowerCase())) now.set(b.name.toLowerCase(), names.bowlers[k][j] || b.name); });
+      });
+      others[t].forEach(n => now.set(n.toLowerCase(), (names.others.find(o => o[0] === t && o[1] === n) || [])[2] || n));
+      const finals = [...now.values()].map(v => v.toLowerCase());
+      const clash = finals.find((v, k) => finals.indexOf(v) !== k);
+      if (clash) { $('#rn-err', body).textContent = `Two ${m.teams[t]} players would both be called “${[...now.values()].find(v => v.toLowerCase() === clash)}”.`; return; }
+    }
     closeModal();
-    renameAll(names);
+    onSave(names);
     toast('Names updated');
   });
 }
