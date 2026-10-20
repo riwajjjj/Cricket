@@ -276,11 +276,11 @@ function matchFigures(t, f, byId) {
     if (d.fielder && !/^sub(stitute)?\b/i.test(d.fielder) && ['caught', 'stumped', 'run out'].includes(d.how)) { const q = get(d.fielder, fldTeam); if (q) q.fd++; }
   };
   // overs: [{ b: bowler index, r: runs, br: runs off the bowler, w: wickets, l: legal balls }]
-  const addOvers = (bt, ft, overs, nameOf) => {
+  const addOvers = (bt, ft, overs, nameOf, Oi = O) => { // Oi: overs this innings was cut to, so a shortened innings still has its own powerplay and death overs
     const seen = new Set();
     overs.forEach((ov, i) => {
       if (!ov.l && !ov.r) return;
-      const k = phaseOf(i, O);
+      const k = phaseOf(i, Oi);
       for (const x of [phT(bt).bat[k], phT(ft).bowl[k]]) { x.r += ov.r; x.b += ov.l; x.w += ov.w; if (!seen.has(k)) x.n++; }
       seen.add(k);
       const nm = nameOf(ov.b), key = nameKey(nm);
@@ -309,7 +309,7 @@ function matchFigures(t, f, byId) {
       const bt = tn(inn.bat), ft = tn(1 - inn.bat);
       inn.batters.forEach(b => { const p = get(b.name, bt); if (p) p.bat = { r: b.runs, b: b.balls, f4: b.f4, f6: b.f6, out: !!b.out }; if (b.out) fielding(b, ft); });
       inn.bowlers.forEach(w => { if (!w.balls && !w.runs) return; const p = get(w.name, ft); if (p) p.bowl = { balls: w.balls, r: w.runs, w: w.wkts }; });
-      if (Array.isArray(inn.overs)) addOvers(bt, ft, inn.overs.map(v => ({ b: v.bowler, r: v.runs, br: v.bowlerRuns, w: v.wkts, l: v.legal })), k => inn.bowlers[k]?.name);
+      if (Array.isArray(inn.overs)) addOvers(bt, ft, inn.overs.map(v => ({ b: v.bowler, r: v.runs, br: v.bowlerRuns, w: v.wkts, l: v.legal })), k => inn.bowlers[k]?.name, inn.maxBalls != null && inn.maxBalls > 0 ? Math.ceil(inn.maxBalls / 6) : O);
     });
     (d.squads || []).forEach((sq, i) => (sq || []).forEach(n => get(String(n).replace(ROLE, ' ').trim(), tn(i))));
   } else return { o, O, players: [], ph, bph: [], pom: null, won: null }; // a typed-in score has no player figures
@@ -782,7 +782,7 @@ function phaseCard(t, S) {
     <p class="modal-sub">Batting: run rate, wickets lost</p>${tbl('bat')}
     <p class="modal-sub" style="margin-top:14px">Bowling: run rate conceded, wickets taken</p>${tbl('bowl')}
     <div class="grid-2" style="margin-top:14px">${mini(0, 'Best powerplay bowlers')}${mini(2, 'Best death bowlers')}</div>
-    <p class="hint">From matches scored live and simulated ones${t.fixtures.some(f => f.manual && !f.manual.sim) ? ' (typed-in scores have no over-by-over detail)' : ''}. Bowlers need ${minB / 6} overs in a phase to be listed.</p></div>`;
+    <p class="hint">From matches scored live and simulated ones${t.fixtures.some(f => f.manual && !f.manual.sim) ? ' (typed-in scores have no over-by-over detail)' : ''}. Bowlers need ${minB / 6} overs in a phase to be listed. An innings cut short by rain is split in the same proportions over the overs it was cut to.</p></div>`;
 }
 
 RENDER.tournament = function renderTournament() {
