@@ -1116,9 +1116,9 @@ function coreBowler(name) {
   if (bench && sameName(bench, nm)) return live.subs?.[1 - i.bat] ? `${bench} has been replaced by the impact player.` : `${bench} is the impact player and hasn't come on yet.`;
   let idx = i.bowlers.findIndex(b => sameName(b.name, nm));
   if (idx !== -1 && idx === i.lastBowler) return `${i.bowlers[idx].name} bowled the last over. Pick someone else.`;
-  if (idx !== -1 && live.overs) {
-    const cap = bowlCap(i);
-    if (Math.floor(i.bowlers[idx].balls / 6) >= cap) return `${i.bowlers[idx].name} has bowled the maximum ${plural(cap, 'over')}.`;
+  if (live.overs) {
+    const c = canBowlAnother(i, idx);
+    if (!c.ok) return idx === -1 ? `No more bowlers can start: the limit is ${capText(c)}.` : `${i.bowlers[idx].name} has bowled the maximum: ${capText(c)}.`;
   }
   if (idx === -1) { i.bowlers.push(mkBowler(nm)); idx = i.bowlers.length - 1; }
   i.bowler = idx;
@@ -1127,7 +1127,17 @@ function coreBowler(name) {
   return null;
 }
 // Each bowler may bowl a fifth of the innings, rounded up; a rain-shortened innings has a lower limit.
-const bowlCap = i => Math.ceil(Math.ceil(maxBallsOf(i) / 6) / 5);
+// A bowler may bowl a fifth of the overs. When the overs don't divide by five, the spare overs go to as few bowlers as possible:
+// 11 overs is 2 each, with one bowler allowed a third over. `k` is the bowler's index in this innings, or -1 for someone yet to bowl.
+function canBowlAnother(i, k) {
+  const O = Math.ceil(maxBallsOf(i) / 6), base = Math.floor(O / 5), spare = O - base * 5;
+  const done = k === -1 ? 0 : Math.floor(i.bowlers[k].balls / 6);
+  if (done < base) return { ok: true };
+  const others = i.bowlers.filter((b, j) => j !== k && b.balls > base * 6).length;
+  if (done === base && others < spare) return { ok: true };
+  return { ok: false, max: base + (spare ? 1 : 0), base, spare };
+}
+const capText = c => c.spare && c.max > c.base ? `${plural(c.base, 'over')} (only ${c.spare === 1 ? 'one bowler' : plural(c.spare, 'bowler')} can bowl ${c.max})` : plural(c.base, 'over');
 export function setBowler(name) {
   const err = act({ t: 'bowler', name: (name || '').trim() }, () => coreBowler(name));
   if (err) { const el = $('#live-bowler-err'); if (el) el.textContent = err; }
@@ -1387,9 +1397,8 @@ export function boardHTML() {
 function bowlerPicker(i) {
   const fsq = playersOf(live, 1 - i.bat);
   if (!fsq) return liveField('live-bowler', 'Bowler', '', { list: 'live-bowlers' });
-  const cap = live.overs ? bowlCap(i) : Infinity;
   const find = nm => i.bowlers.findIndex(b => sameName(b.name, nm));
-  const eligible = fsq.filter(nm => { const k = find(nm); return k === -1 || (k !== i.lastBowler && Math.floor(i.bowlers[k].balls / 6) < cap); });
+  const eligible = fsq.filter(nm => { const k = find(nm); return (k === -1 || k !== i.lastBowler) && (!live.overs || canBowlAnother(i, k).ok); });
   // Default: whoever bowled the over before last (the usual change of ends), then another recent bowler, then the tail.
   const recent = i.overs.slice(0, -1).reverse().map(o => i.bowlers[o.bowler]?.name).filter(Boolean);
   const sel = recent.find(nm => eligible.some(e => sameName(e, nm))) || eligible[eligible.length - 1];
