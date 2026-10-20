@@ -75,7 +75,14 @@ const rpoFor = O => (O <= 10 ? 10.5 - (O - 5) * 0.2 : O <= 20 ? 9.5 - (O - 10) *
 const phaseCuts = O => [O <= 20 ? Math.round(O * 0.3) : Math.round(O * 0.2), O <= 20 ? Math.round(O * 0.25) : Math.round(O * 0.2)];
 const phaseOf = (i, O) => { const [pp, de] = phaseCuts(O); return i < pp ? 0 : i >= O - de ? 2 : 1; };
 const PHASES = ['Powerplay', 'Middle overs', 'Death overs'];
-const phaseOvers = O => { const [pp, de] = phaseCuts(O), r = (x, y) => (x > y ? 'none' : x === y ? `${x}` : `${x}–${y}`); return [r(1, pp), r(pp + 1, O - de), r(O - de + 1, O)]; };
+// Balls in the powerplay, and whole overs at the death, for an innings of B balls. A T20 powerplay is 30% of the balls,
+// so 11 overs (66 balls) have 20 balls: 3.2 overs. Longer matches keep 20% of the overs (10 of 50).
+const phaseBalls = B => { const O = Math.ceil(B / 6); return O <= 20 ? [Math.round(B * 0.3), Math.round(O * 0.25)] : [Math.round(O * 0.2) * 6, Math.round(O * 0.2)]; };
+const phaseOvers = O => {
+  const [pb, de] = phaseBalls(O * 6), ob = b => `${b / 6 | 0}${b % 6 ? '.' + (b % 6) : ''}`;
+  const r = (x, y, empty) => (empty ? 'none' : x === y ? `${x}` : `${x}–${y}`);
+  return [r(1, ob(pb), pb === 0), r(pb % 6 ? `${pb / 6 | 0}.${pb % 6 + 1}` : pb / 6 + 1, O - de, pb >= (O - de) * 6), r(O - de + 1, O, de === 0)];
+};
 const normal = () => { let u = 0; while (!u) u = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random()); };
 const rint = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
 const pick = arr => arr[Math.floor(Math.random() * arr.length)];
@@ -276,18 +283,31 @@ function matchFigures(t, f, byId) {
     if (d.fielder && !/^sub(stitute)?\b/i.test(d.fielder) && ['caught', 'stumped', 'run out'].includes(d.how)) { const q = get(d.fielder, fldTeam); if (q) q.fd++; }
   };
   // overs: [{ b: bowler index, r: runs, br: runs off the bowler, w: wickets, l: legal balls }]
-  const addOvers = (bt, ft, overs, nameOf, Oi = O) => { // Oi: overs this innings was cut to, so a shortened innings still has its own powerplay and death overs
-    const seen = new Set();
+  const addOvers = (bt, ft, overs, nameOf, Bi = O * 6) => { // Bi: balls this innings was cut to, so a shortened innings has its own powerplay and death overs
+    const seen = new Set(), [ppB, de] = phaseBalls(Bi), deathFrom = Math.ceil(Bi / 6) - de;
+    let cum = 0;
     overs.forEach((ov, i) => {
+      const start = cum; cum += ov.l || 0;
       if (!ov.l && !ov.r) return;
-      const k = phaseOf(i, Oi);
-      for (const x of [phT(bt).bat[k], phT(ft).bowl[k]]) { x.r += ov.r; x.b += ov.l; x.w += ov.w; if (!seen.has(k)) x.n++; }
-      seen.add(k);
+      // The over is split between the powerplay and the middle overs when the powerplay ends part-way through it (3.2 overs in an 11-over match).
+      const inPP = Math.max(0, Math.min(ov.l || 0, ppB - start));
+      let parts;
+      if (i >= deathFrom) parts = [[2, ov.l, ov.r, ov.br ?? ov.r, ov.w]];
+      else if (!ov.l) parts = [[start < ppB ? 0 : 1, 0, ov.r, ov.br ?? ov.r, ov.w]];
+      else if (inPP <= 0) parts = [[1, ov.l, ov.r, ov.br ?? ov.r, ov.w]];
+      else if (inPP >= ov.l) parts = [[0, ov.l, ov.r, ov.br ?? ov.r, ov.w]];
+      else {
+        const f = inPP / ov.l, br = ov.br ?? ov.r, w0 = Math.min(ov.w, Math.round(ov.w * f));
+        parts = [[0, inPP, Math.round(ov.r * f), Math.round(br * f), w0], [1, ov.l - inPP, ov.r - Math.round(ov.r * f), br - Math.round(br * f), ov.w - w0]];
+      }
       const nm = nameOf(ov.b), key = nameKey(nm);
-      if (!key) return;
-      let q = bph.get(key);
-      if (!q) { q = { key, name: nm, team: ft, ph: blankPh() }; bph.set(key, q); }
-      q.ph[k].r += ov.br ?? ov.r; q.ph[k].b += ov.l;
+      let q = null;
+      if (key) { q = bph.get(key); if (!q) { q = { key, name: nm, team: ft, ph: blankPh() }; bph.set(key, q); } }
+      parts.forEach(([k, l, r, br, w]) => {
+        for (const x of [phT(bt).bat[k], phT(ft).bowl[k]]) { x.r += r; x.b += l; x.w += w; if (!seen.has(k)) x.n++; }
+        seen.add(k);
+        if (q) { q.ph[k].r += br; q.ph[k].b += l; }
+      });
     });
   };
   if (f.manual?.sim && f.manual.card) {
@@ -309,7 +329,7 @@ function matchFigures(t, f, byId) {
       const bt = tn(inn.bat), ft = tn(1 - inn.bat);
       inn.batters.forEach(b => { const p = get(b.name, bt); if (p) p.bat = { r: b.runs, b: b.balls, f4: b.f4, f6: b.f6, out: !!b.out }; if (b.out) fielding(b, ft); });
       inn.bowlers.forEach(w => { if (!w.balls && !w.runs) return; const p = get(w.name, ft); if (p) p.bowl = { balls: w.balls, r: w.runs, w: w.wkts }; });
-      if (Array.isArray(inn.overs)) addOvers(bt, ft, inn.overs.map(v => ({ b: v.bowler, r: v.runs, br: v.bowlerRuns, w: v.wkts, l: v.legal })), k => inn.bowlers[k]?.name, inn.maxBalls != null && inn.maxBalls > 0 ? Math.ceil(inn.maxBalls / 6) : O);
+      if (Array.isArray(inn.overs)) addOvers(bt, ft, inn.overs.map(v => ({ b: v.bowler, r: v.runs, br: v.bowlerRuns, w: v.wkts, l: v.legal })), k => inn.bowlers[k]?.name, inn.maxBalls != null && inn.maxBalls > 0 ? inn.maxBalls : O * 6);
     });
     (d.squads || []).forEach((sq, i) => (sq || []).forEach(n => get(String(n).replace(ROLE, ' ').trim(), tn(i))));
   } else return { o, O, players: [], ph, bph: [], pom: null, won: null }; // a typed-in score has no player figures
@@ -782,7 +802,7 @@ function phaseCard(t, S) {
     <p class="modal-sub">Batting: run rate, wickets lost</p>${tbl('bat')}
     <p class="modal-sub" style="margin-top:14px">Bowling: run rate conceded, wickets taken</p>${tbl('bowl')}
     <div class="grid-2" style="margin-top:14px">${mini(0, 'Best powerplay bowlers')}${mini(2, 'Best death bowlers')}</div>
-    <p class="hint">From matches scored live and simulated ones${t.fixtures.some(f => f.manual && !f.manual.sim) ? ' (typed-in scores have no over-by-over detail)' : ''}. Bowlers need ${minB / 6} overs in a phase to be listed. An innings cut short by rain is split in the same proportions over the overs it was cut to.</p></div>`;
+    <p class="hint">From matches scored live and simulated ones${t.fixtures.some(f => f.manual && !f.manual.sim) ? ' (typed-in scores have no over-by-over detail)' : ''}. Bowlers need ${minB / 6} overs in a phase to be listed. The powerplay is 30% of the balls in a T20, so an innings cut to 11 overs has a 3.2-over powerplay, and the over it ends in is split between the powerplay and the middle overs.</p></div>`;
 }
 
 RENDER.tournament = function renderTournament() {
