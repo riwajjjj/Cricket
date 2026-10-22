@@ -392,7 +392,7 @@ function commentAction(e, before) {
     case 'session': { const s = live.sessions?.[live.sessions.length - 1]; if (s) say('session', `${s.label}, day ${s.day}: ${s.text}`); break; }
     case 'impact': { const u = live.subs?.[e.team]; if (u) say('event', `Impact Player: ${u.in} replaces ${u.out} for ${live.teams[e.team]}`); break; }
     case 'so': say('event', `${cap1(soName(i.so))}: ${live.teams[i.bat]} ${i.target != null ? `need ${i.target} off the over` : 'bat first'}. ${i.batters[0].name} and ${i.batters[1].name}; ${i.bowlers[0].name} to bowl.`); break;
-    case 'dayovers': say('event', `Overs for day ${clockOf().day} set to ${e.overs}${e.overs < 90 ? ' (time lost to rain or bad light)' : e.overs > 90 ? ' (extra time to make up lost overs)' : ''}`); break;
+    case 'dayovers': { const B = Math.round(e.overs * 6); say('event', `Overs for day ${clockOf().day} set to ${fmtOvers(B)}${B < DAY_BALLS ? ' (time lost to rain or bad light)' : B > DAY_BALLS ? ' (extra time to make up lost overs)' : ''}`); break; }
     case 'newball': say('event', `New ball taken after ${fmtOvers(i.balls - (before.newBallFrom || 0))} overs`); break;
     case 'rain': {
       const k = live.inns.length - 1, stop = live.rain?.stops[k]?.slice(-1)[0];
@@ -861,7 +861,7 @@ export const todayBalls = (m = live) => ballsOf(snapInns(m)) - ballsOf(clockOf(m
 // Balls left in the match: what's left of today plus the remaining days. Overs bowled beyond 90 in a day
 // (if Stumps is never pressed) come out of the days still to come.
 // Overs scheduled for a day: 90 unless changed (a late start for rain, or extra time to make up lost overs).
-export const dayBalls = (m = live, d = clockOf(m).day) => { const o = (m.dayOvers || {})[d]; return o != null ? o * 6 : DAY_BALLS; };
+export const dayBalls = (m = live, d = clockOf(m).day) => { const o = (m.dayOvers || {})[d]; return o != null ? Math.round(o * 6) : DAY_BALLS; };
 export function matchBallsLeft(m = live) {
   let t = 0;
   for (let d = clockOf(m).day; d <= (m.days || 5); d++) t += dayBalls(m, d);
@@ -871,10 +871,11 @@ export function matchBallsLeft(m = live) {
 function coreDayOvers(overs) {
   if (!isTest()) return 'overs per day are only kept in Test matches';
   if (live.status === 'done') return 'the match had already finished';
-  const o = Number(overs);
-  if (!Number.isInteger(o) || o < 0 || o > 120) return 'overs for the day must be a whole number from 0 to 120';
-  if (o * 6 < todayBalls()) return `${fmtOvers(todayBalls())} overs have already been bowled today`;
-  live.dayOvers = { ...(live.dayOvers || {}), [clockOf().day]: o };
+  // Stored in overs; a part-over such as 30.4 is kept as 30 + 4/6, so 6 × overs is always a whole number of balls.
+  const B = Math.round(Number(overs) * 6);
+  if (!Number.isFinite(B) || Math.abs(Number(overs) * 6 - B) > 1e-6 || B < 0 || B > 120 * 6) return 'overs for the day must be from 0 to 120, written like 75 or 30.4';
+  if (B < todayBalls()) return `${fmtOvers(todayBalls())} overs have already been bowled today`;
+  live.dayOvers = { ...(live.dayOvers || {}), [clockOf().day]: B / 6 };
   return null;
 }
 const scoreTxt = (i, m = live) => (i.ended === 'all out' ? `${i.runs} all out` : `${i.runs}/${i.wkts}${i.ended === 'declared' && isTest(m) ? ' dec' : ''}`);
@@ -2696,24 +2697,52 @@ function rainModal() {
 // Tests: set how many overs today has (a late start or stoppage for rain, or extra overs to catch up).
 function dayOversModal() {
   if (!live || live.status === 'done' || !isTest()) return;
-  const day = clockOf().day, now = dayBalls() / 6, bowled = todayBalls();
+  const day = clockOf().day, sched = dayBalls(), bowled = todayBalls();
+  // Umpires announce the overs still to come ("30.4 overs from the restart"), so once play has started that's the default.
+  const mid = bowled > 0;
   const body = openModal(`Overs for day ${day}`, `
-    <p class="hint" style="margin:-6px 0 12px">A normal day has 90 overs. If rain or bad light delays the start or stops play, enter the overs the umpires have scheduled for today, such as 75. If they add overs to make up lost time, enter more than 90. ${fmtOvers(bowled)} overs have been bowled today.</p>
-    <div class="fields">${liveField('do-overs', 'Overs today', String(now), { im: 'numeric', max: 3 })}</div>
+    <p class="hint" style="margin:-6px 0 12px">A normal day has 90 overs. If rain or bad light delays the start or stops play, enter what the umpires have scheduled, such as 75 or 30.4 (30 overs and 4 balls). If they add overs to make up lost time, the day can go past 90. ${fmtOvers(bowled)} overs have been bowled today.</p>
+    <div class="fields">
+      ${mid ? selectField('do-mode', 'The number is', [{ v: 'left', l: 'Overs still to bowl from now' }, { v: 'day', l: 'Overs for the whole day' }], 'left') : ''}
+      ${liveField('do-overs', mid ? 'Overs' : 'Overs today', mid ? fmtOvers(Math.max(0, sched - bowled)) : fmtOvers(sched), { im: 'decimal', max: 5 })}
+    </div>
+    <p class="hint" id="do-prev" style="margin-top:2px"></p>
     <p class="err-text" id="do-err"></p>
     <p class="hint">This changes today only. The overs left in the match and the result chances update. If play is over for the day, press “Stumps now” instead. Undo reverses this.</p>
     <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Apply</button></div>`);
+  const read = () => {
+    const v = $('#do-overs', body).value.trim();
+    if (!v) return { error: 'Enter the overs, such as 75 or 30.4.' };
+    const p = parseOvers(v);
+    if (p.error || p.balls == null) return { error: `Overs: ${p.error || 'write it like 75 or 30.4'}.` };
+    const left = $('#do-mode', body)?.value === 'left';
+    return { balls: left ? bowled + p.balls : p.balls, left: left ? p.balls : null };
+  };
+  let total = sched; // the day's total in balls, as last entered
+  const preview = () => {
+    const r = read(), el = $('#do-prev', body);
+    if (!r.error) total = r.balls;
+    el.textContent = r.error ? '' : r.left != null ? `Day ${day} total: ${fmtOvers(r.balls)} overs (${fmtOvers(bowled)} bowled + ${fmtOvers(r.left)} to come).` : `${fmtOvers(Math.max(0, r.balls - bowled))} overs still to bowl today.`;
+  };
+  body.addEventListener('input', e => { if (e.target.id !== 'do-mode') preview(); }); // a mode switch is handled on change, below
+  body.addEventListener('change', e => {
+    if (e.target.id !== 'do-mode') return;
+    // Switching what the number means converts the value so it still describes the same day.
+    $('#do-overs', body).value = fmtOvers(e.target.value === 'left' ? Math.max(0, total - bowled) : total);
+    preview();
+  });
+  preview();
   body.addEventListener('click', e => {
     const x = e.target.closest('[data-x]');
     if (!x) return;
     if (x.dataset.x === 'cancel') { closeModal(); return; }
-    const v = $('#do-overs', body).value.trim();
-    const o = Number(v);
-    if (!v || !Number.isInteger(o)) { $('#do-err', body).textContent = 'Enter a whole number of overs, such as 75.'; return; }
+    const r = read();
+    if (r.error) { $('#do-err', body).textContent = r.error; return; }
+    const o = r.balls / 6;
     const err = act({ t: 'dayovers', overs: o }, () => coreDayOvers(o));
     if (err) { $('#do-err', body).textContent = `Can't do that: ${err}.`; return; }
     closeModal();
-    toast(`Day ${day}: ${o} overs`);
+    toast(`Day ${day}: ${fmtOvers(r.balls)} overs`);
   });
 }
 
