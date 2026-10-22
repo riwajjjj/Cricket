@@ -37,6 +37,19 @@ function newPart(i) {
 // Balls this innings may last: the overs per side, less anything taken off for rain.
 export const maxBallsOf = (i, m = live) => i.maxBalls ?? (m.overs ? m.overs * 6 : null);
 export const cur = () => live.inns[live.inns.length - 1];
+// The powerplay in balls: 30% of the balls in a T20 (3.2 overs of an 11-over innings), the first fifth of the overs
+// in a longer match. None in a Test, an unlimited innings or a super over.
+export const ppBallsOf = (i, m = live) => {
+  if (!m?.overs || isTest(m) || i.so) return null;
+  const B = maxBallsOf(i, m);
+  if (!B) return null;
+  const O = Math.ceil(B / 6);
+  return O <= 20 ? Math.round(B * 0.3) : Math.round(O * 0.2) * 6;
+};
+const SO_ORD = ['', '', 'second', 'third', 'fourth', 'fifth'];
+const soName = n => (n > 1 ? `${SO_ORD[n] || `${n}th`} super over` : 'super over');
+// How an innings is labelled on scorecards and in the commentary.
+export const innName = (m, k) => { const i = m.inns[k]; return isTest(m) ? `${ORD[k]} innings` : i?.so ? soName(i.so) : `innings ${k + 1}`; };
 // The match is saved after every action. The undo history (up to 40 full copies of the match, several
 // megabytes in a long Test) is written once scoring pauses, and when the page is closed.
 let undoSaveTimer = 0;
@@ -60,7 +73,7 @@ const sizeOf = (m, team) => { const n = sqOf(m, team)?.length; if (!n) return nu
 // Impact Player: until the swap the 12th name is on the bench; after it, the player who was replaced is out of the match.
 export const benchOf = (m, team) => { const sq = m?.impact ? sqOf(m, team) : null; if (!sq) return null; const u = m.subs?.[team]; return u ? u.out : sq.length === 12 ? sq[11] : null; };
 export const playersOf = (m, team) => { const sq = sqOf(m, team), b = benchOf(m, team); return sq && b ? sq.filter(n => n.toLowerCase() !== b.toLowerCase()) : sq; };
-export const ppsOf = (m, inn) => sizeOf(m, inn.bat) || m.pps;
+export const ppsOf = (m, inn) => (inn?.so ? 3 : sizeOf(m, inn.bat) || m.pps); // a super over has two wickets
 const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
 const selectField = (id, label, opts, sel) => `<div class="field"><div class="lab"><label for="${id}">${esc(label)}</label></div><select id="${id}">${opts.map(o => `<option value="${esc(o.v)}"${o.v === sel ? ' selected' : ''}>${esc(o.l)}</option>`).join('')}</select></div>`;
 export const freshLeft = i => ppsOf(live, i) - i.batters.length;
@@ -129,6 +142,7 @@ function runEntry(e) {
     case 'session': return coreSession(e.stumps);
     case 'newball': return coreNewBall();
     case 'impact': return coreImpact(e.team, e.out, e.inn);
+    case 'so': return coreSO(e.s, e.ns, e.bw);
     case 'dayovers': return coreDayOvers(e.overs);
     default: return 'an unknown action';
   }
@@ -291,6 +305,8 @@ function coreBall(ev) {
     commentBall({ i, ev, bw, st, cm, total, r, batRuns, stand, strikerBefore, nonBefore, noneLeft });
     if (overDone) commentOver(i, over, bw);
   }
+  const ppB = ppBallsOf(i);
+  if (legal && ppB && i.balls === ppB) say('event', `End of the powerplay (${fmtOvers(ppB)} overs): ${live.teams[i.bat]} ${i.runs}/${i.wkts}`);
 
   const cap = maxBallsOf(i);
   const oversDone = cap != null && i.balls >= cap;
@@ -375,6 +391,7 @@ function commentAction(e, before) {
     case 'pen': say('event', `5 penalty runs to ${e.bat ? live.teams[i.bat] : live.teams[1 - i.bat]}`); break;
     case 'session': { const s = live.sessions?.[live.sessions.length - 1]; if (s) say('session', `${s.label}, day ${s.day}: ${s.text}`); break; }
     case 'impact': { const u = live.subs?.[e.team]; if (u) say('event', `Impact Player: ${u.in} replaces ${u.out} for ${live.teams[e.team]}`); break; }
+    case 'so': say('event', `${cap1(soName(i.so))}: ${live.teams[i.bat]} ${i.target != null ? `need ${i.target} off the over` : 'bat first'}. ${i.batters[0].name} and ${i.batters[1].name}; ${i.bowlers[0].name} to bowl.`); break;
     case 'dayovers': say('event', `Overs for day ${clockOf().day} set to ${e.overs}${e.overs < 90 ? ' (time lost to rain or bad light)' : e.overs > 90 ? ' (extra time to make up lost overs)' : ''}`); break;
     case 'newball': say('event', `New ball taken after ${fmtOvers(i.balls - (before.newBallFrom || 0))} overs`); break;
     case 'rain': {
@@ -416,7 +433,7 @@ export function commentaryOf(m) {
         st.ended.add(j);
         commSink.push({ inn: j, o: '', kind: 'end', text: `${live.teams[inn.bat]} ${scoreTxt(inn)} (${fmtOvers(inn.balls)} ov): ${endedText(inn.ended, live)}` });
       });
-      if (live.status === 'done' && live.result && !st.out.some(x => x.kind === 'result')) say('result', live.result);
+      if (live.status === 'done' && live.result && [...st.out].reverse().find(x => x.kind === 'result')?.text !== live.result) say('result', live.result);
     }
   } finally {
     ({ live, replaying, curLi } = keep);
@@ -452,7 +469,7 @@ export function openCommentary(m, title) {
   if (!list) { toast('This match was scored before commentary existed.'); return; }
   const groups = [];
   list.forEach(e => { const g = groups[groups.length - 1]; if (g && g.inn === e.inn) g.items.push(e); else groups.push({ inn: e.inn, items: [e] }); });
-  const head = k => { const inn = m.inns[k]; return inn ? `${m.teams[inn.bat]} · ${isTest(m) ? `${ORD[k]} innings` : `innings ${k + 1}`}` : ''; };
+  const head = k => { const inn = m.inns[k]; return inn ? `${m.teams[inn.bat]} · ${innName(m, k)}` : ''; };
   const text = list.map(e => `${e.o ? e.o + '  ' : ''}${e.text}`).join('\n');
   const body = openModal(`Commentary: ${title}`, `
     <div class="modal-actions" style="justify-content:flex-start;margin:-4px 0 12px"><button type="button" class="btn ghost sm" data-x="copy">Copy as text</button></div>
@@ -635,7 +652,7 @@ function coreEnd(reason) {
 function coreAbandon() {
   if (live.status === 'done') return 'the match had already finished';
   if (live.status === 'live') { const i = cur(); i.ended = 'abandoned'; i.needBowler = false; i.freeHit = false; }
-  live.status = 'done'; live.result = 'No result';
+  live.status = 'done'; live.result = cur().so && live.tieResult ? live.tieResult : 'No result'; // a super over cut short leaves the tie
   return null;
 }
 function coreEndAny(reason) {
@@ -771,7 +788,7 @@ export function renameSavedMatch(id, done) {
     if (Array.isArray(live.log)) live.log.push({ t: 'rename', names });
     const data = live;
     live = real;
-    list[k] = { ...list[k], data, title: `${data.teams[0]} v ${data.teams[1]}`, result: data.result || list[k].result, summary: data.inns.map(i => `${data.teams[i.bat]} ${i.runs}/${i.wkts} (${fmtOvers(i.balls)})`).join(' · ') };
+    list[k] = { ...list[k], data, title: `${data.teams[0]} v ${data.teams[1]}`, result: data.result || list[k].result, summary: data.inns.map(i => `${data.teams[i.bat]} ${i.runs}/${i.wkts} (${i.so ? 'super over' : fmtOvers(i.balls)})`).join(' · ') };
     store.set('matches', list);
     if (live && live.id === id) { live = JSON.parse(JSON.stringify(data)); undoStack = []; saveLive(); renderLiveAll(); }
     done && done();
@@ -991,6 +1008,7 @@ export function endInnings(reason) {
   i.ended = reason;
   i.needBowler = false;
   i.freeHit = false;
+  if (i.so) { endSuperOver(i); return; }
   if (isTest()) {
     const n = live.inns.length;
     if (reason === 'draw') { live.status = 'done'; live.result = 'Match drawn'; return; }
@@ -1003,6 +1021,72 @@ export function endInnings(reason) {
   }
   if (live.inns.length === 1) live.status = 'break';
   else { live.status = 'done'; live.result = computeResult(); }
+}
+/* ---------- Super over ----------
+   After a tie in a limited-overs match: one over a side, two wickets. The side that batted second bats first.
+   A tied super over is followed by another, played the same way. Super overs don't count in players' figures. */
+function endSuperOver(i) {
+  const prev = live.inns[live.inns.length - 2];
+  if (!prev || prev.so !== i.so) { live.status = 'break'; return; }
+  live.status = 'done';
+  const base = live.tieResult || 'Match tied';
+  if (i.runs === prev.runs) { live.soWin = null; live.result = `${base} · ${soName(i.so)} tied too`; return; }
+  live.soWin = i.runs > prev.runs ? i.bat : prev.bat;
+  live.result = `${base} · ${live.teams[live.soWin]} won the ${soName(i.so)}`;
+}
+// A super over can be played: the match (or the last super over) ended level.
+export const soDue = (m = live) => {
+  if (!m || isTest(m) || !m.overs || m.status !== 'done' || m.soWin != null) return false;
+  const l = m.inns[m.inns.length - 1], p = m.inns[m.inns.length - 2];
+  return l.so ? !!p && p.so === l.so && p.runs === l.runs : /^Match tied/.test(m.result || '');
+};
+// Players an earlier super over rules out for `team`: batters dismissed in one, and anyone who bowled one.
+function soBan(team, round) {
+  const out = new Set(), bowled = new Set();
+  live.inns.forEach(x => {
+    if (!x.so || x.so >= round) return;
+    if (x.bat === team) x.batters.forEach(b => { if (b.out) out.add(b.name.toLowerCase()); });
+    else x.bowlers.forEach(b => { if (b.balls || b.runs) bowled.add(b.name.toLowerCase()); });
+  });
+  return { out, bowled };
+}
+// Starts a super over: the first half after a tie, or the chase once the first half is done.
+function coreSO(s, ns, bw) {
+  const last = cur();
+  let bat, target = null, round;
+  if (live.status === 'break' && last.so) { bat = 1 - last.bat; target = last.runs + 1; round = last.so; }
+  else if (soDue()) { bat = last.bat; round = (last.so || 0) + 1; }
+  else return 'a super over can only follow a tie';
+  const a = String(s || '').trim(), b = String(ns || '').trim(), w = String(bw || '').trim();
+  if (!a || !b || sameName(a, b)) return 'the two batters need different names';
+  if (!w) return 'choose the bowler';
+  const bad = [a, b].find(n => soBan(bat, round).out.has(n.toLowerCase()));
+  if (bad) return `${bad} was out in an earlier super over, so can’t bat in this one`;
+  if (soBan(1 - bat, round).bowled.has(w.toLowerCase())) return `${w} bowled an earlier super over, so can’t bowl this one`;
+  if (round === 1 && !target) live.tieResult = live.result;
+  const inn = newInnings(bat, a, b, w, target);
+  inn.so = round; inn.maxBalls = 6;
+  live.inns.push(inn);
+  live.status = 'live'; live.result = null; live.soWin = null;
+  return null;
+}
+function soFormHTML() {
+  const last = cur(), second = live.status === 'break';
+  const bat = second ? 1 - last.bat : last.bat, round = second ? last.so : (last.so || 0) + 1;
+  const outB = soBan(bat, round).out, outW = soBan(1 - bat, round).bowled;
+  const bsq = playersOf(live, bat)?.filter(n => !outB.has(n.toLowerCase())), fsq = playersOf(live, 1 - bat)?.filter(n => !outW.has(n.toLowerCase()));
+  const opts = (sq, team) => sq.map(nm => ({ v: nm, l: nm + roleTag(live, team, nm) }));
+  const title = second ? `${cap1(soName(round))}: ${live.teams[bat]} need ${last.runs + 1} to win` : `${round > 1 ? 'Still level' : 'Scores level'}: ${round > 1 ? 'another super over' : 'super over'}, ${live.teams[bat]} bat first`;
+  return `<div class="card prompt-card">
+    <h2 class="card-title">${esc(title)}</h2>
+    <div class="setup-grid">
+      ${bsq && bsq.length >= 2 ? selectField('so-s', 'Striker', opts(bsq, bat), bsq[0]) + selectField('so-ns', 'Non-striker', opts(bsq, bat), bsq[1]) : liveField('so-s', 'Striker', '') + liveField('so-ns', 'Non-striker', '')}
+      ${fsq && fsq.length ? selectField('so-bw', 'Bowler', opts(fsq, 1 - bat), fsq[fsq.length - 1]) : liveField('so-bw', 'Bowler', '')}
+    </div>
+    <p class="hint">One over a side and two wickets, so a third batter comes in only after a wicket. ${!second && round === 1 ? 'The side that batted second in the match bats first. ' : ''}Batters out in an earlier super over, and its bowler, can’t play in the next one. ${second ? '' : 'Skip it and the match stays a tie.'}</p>
+    <p class="err-text" id="so-err"></p>
+    <div class="modal-actions" style="justify-content:flex-start"><button type="button" class="btn" data-act="so-start">${second ? 'Start the chase' : `Start the ${soName(round)}`}</button>${second ? `<button type="button" class="btn ghost" data-act="undo"${undoStack.length ? '' : ' disabled'}>Undo last ball</button>` : ''}</div>
+  </div>`;
 }
 export function computeResult() {
   if (isTest()) {
@@ -1074,7 +1158,7 @@ const impactInHTML = (team, p) => {
 };
 const impactInVal = (body, p) => $(`#${p}-pick`, body)?.value || $(`#${p}-in`, body)?.value || '';
 const impactInWire = (body, p) => body.addEventListener('change', e => { if (e.target.id === `${p}-pick`) $(`#${p}-in-w`, body).hidden = !!e.target.value; });
-const impactAvail = () => !!live && live.impact && live.status !== 'done' && [0, 1].some(t => sqOf(live, t) && !live.subs?.[t]);
+const impactAvail = () => !!live && live.impact && live.status !== 'done' && !cur().so && [0, 1].some(t => sqOf(live, t) && !live.subs?.[t]);
 function impactModal() {
   if (!impactAvail()) { toast('No impact player is left to bring on.'); return; }
   const avail = [0, 1].filter(t => sqOf(live, t) && !live.subs?.[t]);
@@ -1370,22 +1454,25 @@ export function boardHTML() {
   const ballsLeft = cap != null ? cap - i.balls : null;
   const need = chasing ? i.target - i.runs : null;
   const rrr = chasing && ballsLeft > 0 && need > 0 ? need / (ballsLeft / 6) : null;
+  const ppB = ppBallsOf(i), inPP = live.status === 'live' && ppB != null && i.balls < ppB;
   let eq = '';
   if (live.status === 'done') eq = `<span class="ok">${esc(live.result)}</span>`;
+  else if (live.status === 'break' && i.so) eq = `${esc(cap1(soName(i.so)))}: ${esc(live.teams[1 - i.bat])} need <em>${i.runs + 1}</em> to win`;
   else if (live.status === 'break' && isTest()) eq = esc(leadText(true));
   else if (live.status === 'break') { const pc = plannedChase(); eq = `Innings over. ${esc(live.teams[1 - i.bat])} need <em>${pc.target}</em> to win${pc.dls ? ` off ${fmtOvers(pc.balls)} overs (DLS)` : ''}`; }
   else if (isTest() && !chasing) eq = esc(leadText(false));
   else if (chasing && ballsLeft != null && need > ballsLeft * 6) eq = `Need ${need} off ${ballsLeft} ${ballsLeft === 1 ? 'ball' : 'balls'}: <span class="no">out of reach</span>`;
   else if (chasing) eq = ballsLeft != null ? `Need <em>${need}</em> off <em>${ballsLeft}</em> ${ballsLeft === 1 ? 'ball' : 'balls'}` : `Need <em>${need}</em> to win`;
-  else if (live.overs && crr != null) eq = `Projected <em>${Math.round(i.runs + crr * (ballsLeft / 6))}</em>`;
+  else if (live.overs && crr != null && !i.so) eq = `Projected <em>${Math.round(i.runs + crr * (ballsLeft / 6))}</em>`;
   return `<div class="board${live.status === 'live' && chasing ? ' pulse' : ''}">
     <div class="board-main">
-      <div class="team-line">${esc(team)}${isTest() ? `<span class="dim" style="font-size:.85em">${ORD[live.inns.length - 1]} innings${live.followedOn && live.inns.length === 3 ? ', following on' : ''}${live.status !== 'done' ? ` · Day ${clockOf().day}, ${SESS[clockOf().s].toLowerCase()}` : ''}</span>` : ''}${live.status === 'live' ? '<span class="badge live">Live</span>' : ''}${i.freeHit && live.status === 'live' ? '<span class="badge fh">Free hit</span>' : ''}</div>
+      <div class="team-line">${esc(team)}${isTest() ? `<span class="dim" style="font-size:.85em">${ORD[live.inns.length - 1]} innings${live.followedOn && live.inns.length === 3 ? ', following on' : ''}${live.status !== 'done' ? ` · Day ${clockOf().day}, ${SESS[clockOf().s].toLowerCase()}` : ''}</span>` : ''}${live.status === 'live' ? '<span class="badge live">Live</span>' : ''}${i.so ? `<span class="badge" style="background:rgba(243,194,76,.16);color:#f3c24c">${esc(cap1(soName(i.so)))}</span>` : ''}${inPP ? '<span class="badge" style="background:rgba(120,190,255,.16);color:#9fd0ff">Powerplay</span>' : ''}${i.freeHit && live.status === 'live' ? '<span class="badge fh">Free hit</span>' : ''}</div>
       <div class="score-big">${i.runs}/${i.wkts}<small>(${fmtOvers(i.balls)}${cap != null ? `/${fmtOvers(cap)}` : ''} ov)</small></div>
       ${eq ? `<div class="board-eq" style="font-size:clamp(1.15rem,.9rem + 1.2vw,1.6rem);margin-top:8px">${eq}</div>` : ''}
     </div>
     <div class="board-side">
       <div class="board-stat"><b>${crr != null ? nf(crr) : '—'}</b><span>Run rate</span></div>
+      ${inPP ? `<div class="board-stat"><b>${fmtOvers(ppB - i.balls)}</b><span>Powerplay left (of ${fmtOvers(ppB)})</span></div>` : ''}
       ${chasing ? `<div class="board-stat"><b>${i.target}</b><span>Target${i.dls ? ' (DLS)' : ''}</span></div>` : ''}
       ${chasing && i.dls && live.status === 'live' && !isTest() ? `<div class="board-stat"><b>${dlsFor().parNow}</b><span>DLS par now</span></div>` : ''}
       ${chasing && live.status === 'live' ? `<div class="board-stat"><b>${rrr != null ? nf(rrr) : '—'}</b><span>Required</span></div>` : ''}
@@ -1405,6 +1492,30 @@ function bowlerPicker(i) {
   const opts = eligible.map(nm => { const k = find(nm); const b = i.bowlers[k]; const t = nm + roleTag(live, 1 - i.bat, nm); return { v: nm, l: b ? `${t} · ${fmtOvers(b.balls)}-${b.maidens}-${b.runs}-${b.wkts}` : t }; });
   if (!opts.length) return '<p class="err-text">Nobody in the squad is able to bowl this over.</p>';
   return selectField('live-bowler', 'Bowler', opts, eligible.find(e => sameName(e, sel)));
+}
+// How many overs each bowler has left. When the overs don't divide by five, the spare overs go to as few bowlers as possible.
+function quotaHTML(i) {
+  if (!live.overs || i.so || isTest()) return '';
+  const O = Math.ceil(maxBallsOf(i) / 6), base = Math.floor(O / 5), spare = O - base * 5;
+  const used = i.bowlers.filter(b => b.balls > base * 6).length;
+  const maxFor = b => base + (spare && (b.balls > base * 6 || used < spare) ? 1 : 0);
+  const rows = i.bowlers.map((b, k) => ({ b, k })).filter(x => x.b.balls || x.k === i.bowler).sort((x, y) => y.b.balls - x.b.balls);
+  if (!rows.length) return '';
+  const note = ({ b, k }) => {
+    const left = maxFor(b) * 6 - b.balls;
+    if (k === i.bowler && !i.needBowler) return left <= 0 ? 'last over' : 'bowling now';
+    if (left <= 0) return 'used up';
+    if (k === i.lastBowler && i.needBowler) return 'bowled the last over';
+    return '';
+  };
+  const limit = spare ? `${plural(base, 'over')} each, and ${spare === 1 ? 'one bowler' : `${spare} bowlers`} may bowl ${base + 1} (${Math.min(used, spare)} of ${spare} taken)` : `${plural(base, 'over')} each`;
+  const sq = playersOf(live, 1 - i.bat), rest = sq ? sq.filter(n => !i.bowlers.some(b => sameName(b.name, n) && b.balls)).length : 0;
+  return `<div class="card">
+    <h2 class="card-title">Overs left</h2>
+    <div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Bowler</th><th class="num">Bowled</th><th class="num">Left</th><th></th></tr></thead>
+    <tbody>${rows.map(x => { const left = Math.max(0, maxFor(x.b) * 6 - x.b.balls); return `<tr><td>${esc(x.b.name)}</td><td class="num">${fmtOvers(x.b.balls)}</td><td class="num"><b${left ? '' : ' class="dim"'}>${fmtOvers(left)}</b></td><td class="dim" style="font-size:.8rem">${note(x)}</td></tr>`; }).join('')}</tbody></table></div>
+    <p class="hint" style="margin-bottom:0">Limit: ${limit}.${rest ? ` ${plural(rest, 'other player')} can bowl up to ${plural(maxFor({ balls: 0 }), 'over')}.` : ''}</p>
+  </div>`;
 }
 export function liveHTML(animateLast) {
   const i = cur();
@@ -1457,7 +1568,7 @@ export function liveHTML(animateLast) {
             <button type="button" class="btn ghost sm" data-act="retire">Retire batter</button>
             <button type="button" class="btn ghost sm" data-act="penalty">Penalty runs</button>
             ${impactAvail() ? '<button type="button" class="btn ghost sm" data-act="impact">Impact player</button>' : ''}
-            ${live.overs && !isTest() ? '<button type="button" class="btn ghost sm" data-act="rain">Rain / stoppage</button>' : ''}
+            ${live.overs && !isTest() && !i.so ? '<button type="button" class="btn ghost sm" data-act="rain">Rain / stoppage</button>' : ''}
             <button type="button" class="btn ghost sm" data-act="rename">Edit names</button>
             <button type="button" class="btn ghost sm danger" data-act="end-inn">${isTest() ? 'Declare' : 'End innings'}</button>
             ${isTest() ? '<button type="button" class="btn ghost sm" data-act="draw">End as a draw</button>' : '<button type="button" class="btn ghost sm" data-act="abandon">No result</button>'}
@@ -1479,6 +1590,7 @@ export function liveHTML(animateLast) {
         <div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th></tr></thead>
         <tbody>${(i.needBowler && prevBowler ? [prevBowler] : [bw]).map(b => `<tr><td>${esc(b.name + roleTag(live, 1 - i.bat, b.name))}</td><td class="num">${fmtOvers(b.balls)}</td><td class="num">${b.maidens}</td><td class="num">${b.runs}</td><td class="num"><b>${b.wkts}</b></td><td class="num">${b.balls ? nf(b.runs / (b.balls / 6)) : '—'}</td></tr>`).join('')}</tbody></table></div>
       </div>
+      ${quotaHTML(i)}
       ${commentaryCardHTML()}
       ${matchupsCard(i)}
       ${lastOvers.length ? `<div class="card"><h2 class="card-title">Recent overs</h2><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><tbody>${lastOvers.map(o => { const n = i.overs.indexOf(o) + 1; return `<tr><td class="dim">Ov ${n}</td><td>${esc(i.bowlers[o.bowler].name)}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true)).join('')}</span></td><td class="num"><b>${o.runs}</b>${o.wkts ? ` <span class="neg">${o.wkts}w</span>` : ''}</td></tr>`; }).join('')}</tbody></table></div></div>` : ''}
@@ -1490,7 +1602,7 @@ export function liveHTML(animateLast) {
 
 /* Match situation inside the live scorer: projections, win probability, par check. */
 export function liveSituation() {
-  if (!live || live.status !== 'live' || !live.overs) return null;
+  if (!live || live.status !== 'live' || !live.overs || cur().so) return null;
   const i = cur(), cap = maxBallsOf(i), N = cap / 6, prof = profileFor(N);
   const left = cap - i.balls;
   const crr = i.balls ? i.runs / (i.balls / 6) : null;
@@ -1587,6 +1699,7 @@ export function wpSeries(m) {
 }
 
 export function breakHTML() {
+  if (cur().so) return `${boardHTML()}${soFormHTML()}`;
   const test = isTest();
   const n = live.inns.length;
   const nx = test ? testNext() : null;
@@ -1680,8 +1793,8 @@ function coreStart2(s, ns, bw, bat, lost = 0) {
 
 export function doneHTML() {
   return `${boardHTML()}<div class="card result-banner"><h2 class="card-title">Result</h2><p style="margin:0;font:700 1.4rem/1.25 var(--f-display);letter-spacing:.02em">${esc(live.result)}</p>
-    <p class="hint">${live.inns.map(i => `${esc(live.teams[i.bat])} ${i.runs}/${i.wkts} (${fmtOvers(i.balls)} ov)`).join(' · ')}</p>
-    <div class="modal-actions" style="justify-content:flex-start"><button type="button" class="btn" data-act="save-match">Save match</button><button type="button" class="btn ghost" data-act="image">Share as image</button><button type="button" class="btn ghost" data-act="sc-image">Scorecard image</button><button type="button" class="btn ghost" data-act="print">Print or save as PDF</button><button type="button" class="btn ghost" data-act="csv">Scorecard CSV</button><button type="button" class="btn ghost" data-act="undo"${undoStack.length ? '' : ' disabled'}>Undo last ball</button></div></div>`;
+    <p class="hint">${live.inns.map(i => `${esc(live.teams[i.bat])} ${i.runs}/${i.wkts} (${i.so ? soName(i.so) : `${fmtOvers(i.balls)} ov`})`).join(' · ')}</p>
+    <div class="modal-actions" style="justify-content:flex-start"><button type="button" class="btn" data-act="save-match">Save match</button><button type="button" class="btn ghost" data-act="image">Share as image</button><button type="button" class="btn ghost" data-act="sc-image">Scorecard image</button><button type="button" class="btn ghost" data-act="print">Print or save as PDF</button><button type="button" class="btn ghost" data-act="csv">Scorecard CSV</button><button type="button" class="btn ghost" data-act="undo"${undoStack.length ? '' : ' disabled'}>Undo last ball</button></div></div>${soDue() ? soFormHTML() : ''}`;
 }
 
 // A ball in an over. In the live match it's a button that opens the edit dialog.
@@ -1734,7 +1847,7 @@ export function scorecardHTML(m, idx) {
   }).join('');
   const bowls = i.bowlers.filter(b => b.balls || b.runs).map(b => `<tr><td>${esc(b.name + roleTag(m, 1 - i.bat, b.name))}</td><td class="num">${fmtOvers(b.balls)}</td><td class="num">${b.maidens}</td><td class="num">${b.runs}</td><td class="num"><b>${b.wkts}</b></td><td class="num">${b.balls ? nf(b.runs / (b.balls / 6)) : '—'}</td><td class="num">${b.dots}</td><td class="num">${b.wd}/${b.nb}</td></tr>`).join('');
   return `<div class="card scorecard">
-    <div class="sc-head"><h3>${esc(team)} · innings ${idx + 1}</h3><span class="sc-total">${i.runs}/${i.wkts} <span class="dim" style="font-size:.8em">(${fmtOvers(i.balls)} ov, RR ${rr})</span></span></div>
+    <div class="sc-head"><h3>${esc(team)} · ${esc(innName(m, idx))}</h3><span class="sc-total">${i.runs}/${i.wkts} <span class="dim" style="font-size:.8em">(${fmtOvers(i.balls)} ov, RR ${rr})</span></span></div>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Batter</th><th>Dismissal</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th></tr></thead><tbody>${bats}</tbody></table></div>
     <p class="sc-meta">Extras ${exT} (b ${ex.b}, lb ${ex.lb}, w ${ex.wd}, nb ${ex.nb}${ex.pen ? `, pen ${ex.pen}` : ''})${i.target != null ? ` · Target ${i.target}${i.dls ? ' (DLS)' : ''}` : ''}${i.maxBalls != null && m.overs && i.maxBalls !== m.overs * 6 ? ` · Reduced to ${fmtOvers(i.maxBalls)} overs` : ''}${i.ended ? ` · ${esc(endedText(i.ended, m))}` : ''}</p>
     ${m.subs?.[i.bat] || m.subs?.[1 - i.bat] ? `<p class="sc-meta">${[i.bat, 1 - i.bat].filter(t => m.subs?.[t]).map(t => `Impact player (${esc(m.teams[t])}): ${esc(m.subs[t].in)} for ${esc(m.subs[t].out)}`).join(' · ')}</p>` : ''}
@@ -1752,7 +1865,8 @@ export function scorecardHTML(m, idx) {
   </div>`;
 }
 
-export function liveCharts(m) {
+export function liveCharts(full) {
+  const m = full && full.inns.some(i => i.so) ? { ...full, inns: full.inns.filter(i => !i.so) } : full; // super overs stay out of the charts
   const wrap = $('#live-charts');
   const any = m && m.inns.some(i => i.overs.some(o => o.balls.length));
   wrap.hidden = !any;
@@ -1786,7 +1900,7 @@ export function liveCharts(m) {
   if (tgt) ds.push({ label: `Target ${tgt}`, data: wl.map(() => tgt), borderColor: p.ball, borderDash: [6, 5], borderWidth: 1.5, pointRadius: 0, fill: false });
   chart('c-live-worm', { type: 'line', data: { labels: wl, datasets: ds }, options: baseOpts({ interaction: { mode: 'index', intersect: false }, scales: axes({ x: 'Overs', y: 'Runs' }) }) });
 
-  wagonCard(m);
+  wagonCard(full);
   const wp = wpSeries(m);
   const card = $('#live-wp-card');
   card.hidden = !wp;
@@ -1951,7 +2065,7 @@ function wagonCard(m) {
   m.inns.forEach((inn, k) => {
     const withShots = inn.batters.map((b, j) => ({ b, j })).filter(x => x.b.shots && x.b.shots.length);
     if (!withShots.length) return;
-    opts.push({ v: `${k}:all`, l: `${m.teams[inn.bat]} · ${isTest(m) ? ORD[k] : k ? '2nd' : '1st'} innings (all batters)` });
+    opts.push({ v: `${k}:all`, l: `${m.teams[inn.bat]} · ${isTest(m) ? `${ORD[k]} innings` : inn.so ? soName(inn.so) : k ? '2nd innings' : '1st innings'} (all batters)` });
     withShots.forEach(({ b, j }) => opts.push({ v: `${k}:${j}`, l: `${b.name} · ${b.runs} (${b.balls})` }));
   });
   card.hidden = !opts.length;
@@ -2002,7 +2116,8 @@ function batterNameField(i, id, label) {
   const back = i.batters.filter(b => b.retired);
   const sq = playersOf(live, i.bat);
   if (sq) {
-    const yet = sq.filter(n => !i.batters.some(b => sameName(b.name, n)));
+    const ban = i.so ? soBan(i.bat, i.so).out : null;
+    const yet = sq.filter(n => !i.batters.some(b => sameName(b.name, n)) && !ban?.has(n.toLowerCase()));
     const opts = [...yet.map(n => ({ v: n, l: n + roleTag(live, i.bat, n) })), ...back.map(b => ({ v: b.name, l: `${b.name} (retired, returning)` }))];
     return selectField(id, label, opts, opts[0]?.v);
   }
@@ -2278,6 +2393,13 @@ export async function liveAction(action, el) {
     case 'edit-ball': openEditBall(Number(el.dataset.li)); break;
     case 'set-bowler': setBowler($('#live-bowler')?.value); break;
     case 'start-2nd': startSecond(); break;
+    case 'so-start': {
+      const g = id => ($('#' + id)?.value ?? '').trim();
+      const s = g('so-s'), ns = g('so-ns'), bw = g('so-bw');
+      const err = act({ t: 'so', s, ns, bw }, () => coreSO(s, ns, bw));
+      if (err) { const el = $('#so-err'); if (el) el.textContent = `Can’t start it: ${err}.`; }
+      break;
+    }
     case 'end-inn':
       if (isTest() && live.inns.length === 4) { liveAction('draw', el); break; }
       if (await confirmBox(isTest() ? 'Declare this innings?' : 'End this innings?', isTest() ? 'The innings closes at the current score. You can undo it.' : live.inns.length === 1 ? 'The innings closes at the current score and the other side starts its chase. If play has stopped for good, use “No result” instead. You can undo it.' : `The chase stops at ${cur().runs}/${cur().wkts} and the result is decided on that score. If play has stopped for good, use “No result” instead. You can undo it.`, isTest() ? 'Declare' : 'End innings', true)) {
@@ -2368,7 +2490,7 @@ export function liveShareData() {
   return {
     eyebrow: `${f} · ${live.teams[0]} v ${live.teams[1]}`,
     title: live.result || (live.status === 'break' ? (isTest() ? leadText(true).replace(/^Innings over\. /, '') : `${live.teams[1 - live.inns[0].bat]} need ${plannedChase().target}`) : `${live.teams[cur().bat]} ${cur().runs}/${cur().wkts}`),
-    subtitle: live.inns.map(i => `${live.teams[i.bat]} ${i.runs}/${i.wkts} (${fmtOvers(i.balls)} ov)`).join('  ·  '),
+    subtitle: live.inns.map(i => `${live.teams[i.bat]} ${i.runs}/${i.wkts} (${i.so ? 'super over' : `${fmtOvers(i.balls)} ov`})`).join('  ·  '),
     stats: live.inns.flatMap(i => {
       const top = i.batters.slice().sort((a, b) => b.runs - a.runs)[0];
       const best = i.bowlers.slice().sort((a, b) => b.wkts - a.wkts || a.runs - b.runs)[0];
@@ -2383,7 +2505,7 @@ export function liveShareData() {
 export function scorecardCSV(m) {
   const rows = [];
   m.inns.forEach((i, k) => {
-    rows.push([`${m.teams[i.bat]} innings ${k + 1}`, `${i.runs}/${i.wkts}`, `${fmtOvers(i.balls)} overs`]);
+    rows.push([`${m.teams[i.bat]} ${innName(m, k)}`, `${i.runs}/${i.wkts}`, `${fmtOvers(i.balls)} overs`]);
     rows.push(['Batter', 'Dismissal', 'Runs', 'Balls', '4s', '6s', 'SR']);
     i.batters.forEach(b => rows.push([b.name + roleTag(m, i.bat, b.name), howOf(b), b.runs, b.balls, b.f4, b.f6, b.balls ? fx(b.runs / b.balls * 100) : '']));
     rows.push(['Extras', `b ${i.extras.b}, lb ${i.extras.lb}, w ${i.extras.wd}, nb ${i.extras.nb}${i.extras.pen ? `, pen ${i.extras.pen}` : ''}`]);
@@ -2502,7 +2624,7 @@ export async function scorecardImage(m) {
     m.inns.forEach((i, k) => {
       const ex = i.extras, exT = ex.wd + ex.nb + ex.b + ex.lb + (ex.pen || 0);
       x.fillStyle = '#11201b'; roundRect(x, P, y, W - 2 * P, 56, 12); x.fill(); x.strokeStyle = '#22392f'; x.lineWidth = 2; x.stroke();
-      x.fillStyle = '#e8f0eb'; x.font = `700 30px ${D}`; x.fillText(fitText(x, `${m.teams[i.bat]} · innings ${k + 1}`.toUpperCase(), 640), P + 20, y + 38);
+      x.fillStyle = '#e8f0eb'; x.font = `700 30px ${D}`; x.fillText(fitText(x, `${m.teams[i.bat]} · ${innName(m, k)}`.toUpperCase(), 640), P + 20, y + 38);
       x.fillStyle = '#f3c24c'; x._y = y + 38; num(x, `${i.runs}/${i.wkts} (${fmtOvers(i.balls)} ov)`, W - P - 20);
       y += 92;
       const cols = [['R', 840], ['B', 910], ['4s', 980], ['6s', 1050], ['SR', W - P]];

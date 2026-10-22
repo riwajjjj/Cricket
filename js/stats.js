@@ -121,19 +121,21 @@ export function fixtureOutcome(t, f, byId) {
     const quota = (d.overs || t.overs || 0) * 6;
     const cap = inn => inn.maxBalls ?? quota; // overs a side was allotted, after any rain cuts
     const side = { a: null, b: null };
-    d.inns.forEach(inn => {
+    const main = d.inns.filter(inn => !inn.so); // a super over decides a tie but isn't part of the scores
+    main.forEach(inn => {
       const allOut = inn.ended === 'all out';
       side[inn.bat === ai ? 'a' : 'b'] = { r: inn.runs, balls: inn.balls, faced: allOut && cap(inn) ? cap(inn) : inn.balls, ao: allOut, w: inn.wkts };
     });
     if (!side.a || !side.b) return null;
-    const [i1, i2] = d.inns;
+    const [i1, i2] = main;
     const firstSide = i1.bat === ai ? 'a' : 'b', secondSide = firstSide === 'a' ? 'b' : 'a';
     // A rain-revised chase: for net run rate, Team 1 counts as one run short of the target, off Team 2's overs.
     if (i2.dls && i2.target != null && cap(i2)) side[firstSide] = { ...side[firstSide], r: i2.target - 1, balls: cap(i2), faced: cap(i2), ao: false };
     let winner;
     if (i2.ended === 'rain' && d.dlsPar != null) winner = i2.runs > d.dlsPar ? secondSide : i2.runs === d.dlsPar ? null : firstSide;
     else winner = i2.runs >= i2.target ? secondSide : i2.runs === i2.target - 1 ? null : firstSide;
-    return { a: side.a, b: side.b, winner, so: winner == null ? soOf(f) : null, text: d.result, linked: m };
+    const soLive = d.soWin === 0 || d.soWin === 1 ? (d.soWin === ai ? 'a' : 'b') : null; // a super over scored in the live scorer
+    return { a: side.a, b: side.b, winner, so: winner == null ? soOf(f) || soLive : null, text: main.length < d.inns.length ? d.tieResult || 'Match tied' : d.result, linked: m }; // the super over's winner is added where the result is shown
   }
   if (f.manual) {
     const quota = (t.overs || 0) * 6;

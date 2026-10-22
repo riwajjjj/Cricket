@@ -54,6 +54,7 @@ export function buildRecords(matches = finishedMatches(), { includeBase = true, 
     };
     (d.squads || []).forEach((sq, t) => (sq || []).forEach(n => { const r = get(n, d.teams[t]); if (r) line(r); }));
     for (const inn of d.inns) {
+      if (inn.so) continue; // super overs don't count in players' figures
       const batTeam = d.teams[inn.bat], fldTeam = d.teams[1 - inn.bat];
       for (const b of inn.batters) {
         const r = get(b.name, batTeam); if (!r) continue;
@@ -197,6 +198,7 @@ export function milestones(matches = finishedMatches(), base = careerBase()) {
       crossed(before, t.apps, APP_MARKS).forEach(x => ev(k, p.name, 'apps', `${p.name} plays a ${ORDN(x)} match`, 1));
     }
     d.inns.forEach(inn => {
+      if (inn.so) return;
       const opp = d.teams[1 - inn.bat], bt = d.teams[inn.bat];
       inn.batters.forEach(b => {
         const k = nameKey(b.name); if (!k) return;

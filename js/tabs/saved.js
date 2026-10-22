@@ -32,7 +32,7 @@ export function savePlayer(kind) {
 export function saveMatch(quiet = false) {
   if (!live) return;
   const list = savedMatches();
-  const entry = { id: live.id, savedAt: Date.now(), title: `${live.teams[0]} v ${live.teams[1]}`, result: live.result || 'In progress', format: live.format, summary: live.inns.map(i => `${live.teams[i.bat]} ${i.runs}/${i.wkts} (${fmtOvers(i.balls)})`).join(' · '), data: JSON.parse(JSON.stringify(live)) };
+  const entry = { id: live.id, savedAt: Date.now(), title: `${live.teams[0]} v ${live.teams[1]}`, result: live.result || 'In progress', format: live.format, summary: live.inns.map(i => `${live.teams[i.bat]} ${i.runs}/${i.wkts} (${i.so ? 'super over' : fmtOvers(i.balls)})`).join(' · '), data: JSON.parse(JSON.stringify(live)) };
   const k = list.findIndex(m => m.id === live.id);
   if (k >= 0) list[k] = entry; else list.unshift(entry);
   store.set('matches', list);
