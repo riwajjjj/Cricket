@@ -343,7 +343,7 @@
 }
 .pad button:hover { border-color: var(--accent); }
 .pad button:active { transform: scale(0.96); }
-.pad button.k4 { color: var(--sky); }
+.pad button.k4 { color: var(--turf); }
 .pad button.k6 { color: var(--accent-text); }
 .pad button.kw { background: var(--ball); border-color: var(--ball); color: #fff; }
 .pad button.kx { font-size: 1.05rem; letter-spacing: 0.04em; color: var(--violet); }
@@ -748,3 +748,41 @@ body:has(#tab-live:not([hidden])) .format-picker { display: none; }
 .live-mini[hidden], body:has(#tab-live[hidden]) .live-mini { display: none; }
 @media (min-width: 761px) { .live-mini { display: none !important; } }
 @media print { .live-mini { display: none !important; } }
+
+/* ---------- live polish: score hero, over chips, batter rows, motion ---------- */
+.board::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 4px; z-index: 2; background: linear-gradient(90deg, var(--accent), var(--turf) 60%, var(--sky)); }
+.board .score-big { font-size: clamp(3rem, 2rem + 4vw, 4.6rem); margin-top: 6px; display: flex; align-items: baseline; }
+.board .score-big .sc-sep { color: #5f7a6c; margin: 0 0.04em; }
+.sc-runs { display: inline-block; min-width: 1ch; }
+.sc-runs.ticking { color: #f3c24c; }
+.board-sub { margin-top: 6px; font: 600 0.95rem/1.2 var(--f-body); color: #cfe0d6; font-variant-numeric: tabular-nums; }
+.board-sub .dim { color: #7d968a; }
+.hero-bar { margin-top: 10px; height: 5px; max-width: 340px; border-radius: 99px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.hero-bar span { display: block; height: 100%; border-radius: inherit; background: #7d968a; transition: width 0.45s cubic-bezier(.2,.8,.2,1); }
+.hero-bar.chase span { background: linear-gradient(90deg, var(--turf), #f3c24c); }
+
+/* this over: dots grey, boundaries green, sixes gold, wickets red, empty slots for balls to come */
+.bdot { transition: transform 0.15s ease; }
+.bdot.d0 { background: var(--raise); color: var(--muted); }
+.bdot.d4 { background: color-mix(in srgb, var(--turf) 24%, var(--surface)); border-color: var(--turf); color: var(--fg); }
+.bdot.d6 { background: var(--accent); border-color: var(--accent); color: #1d1503; }
+.bdot.dw { background: var(--ball); border-color: var(--ball); color: #fff; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ball) 22%, transparent); }
+.bdot.ghost { background: transparent; border: 1.5px dashed var(--line); min-width: 34px; padding: 0; }
+.bdot.sm.ghost { display: none; }
+.cm-four .cm-o { color: var(--turf); }
+
+/* batter rows: striker highlighted, strike rate coloured against par */
+.bat-row.striker td { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.bat-row.striker td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.bat-ic { width: 13px; height: 13px; margin-right: 6px; vertical-align: -1px; color: var(--accent-text); }
+.sr { display: inline-block; padding: 1px 7px; border-radius: 999px; font-variant-numeric: tabular-nums; }
+.sr.sr-hi { color: var(--turf); background: color-mix(in srgb, var(--turf) 14%, transparent); font-weight: 700; }
+.sr.sr-mid { color: var(--accent-text); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.sr.sr-lo { color: var(--ball); background: color-mix(in srgb, var(--ball) 12%, transparent); }
+
+/* motion */
+.fold[open] > :not(summary) { animation: foldIn 0.22s ease-out; }
+@keyframes foldIn { from { opacity: 0; transform: translateY(-6px); } }
+.cm.cm-new { animation: cmIn 0.28s cubic-bezier(.2,.8,.2,1); }
+@keyframes cmIn { from { opacity: 0; transform: translateX(-12px); background: color-mix(in srgb, var(--accent) 12%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .hero-bar span, .bdot { transition: none; } }

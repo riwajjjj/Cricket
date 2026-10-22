@@ -466,6 +466,37 @@ function fillCommentary() {
   if (list) el.innerHTML = latestHTML(list);
   const pk = $('#comm-peek'), last = list?.[list.length - 1];
   if (pk && last) pk.textContent = `${last.o ? last.o + ' ' : ''}${last.text}`;
+  markNewComm();
+}
+// Slide in the newest commentary line, but one when it's actually new
+let commTop = null;
+function markNewComm() {
+  const li = $('#comm-latest li:first-child');
+  if (!li || li.querySelector('.cm-t.dim')) return; // placeholder, not a real line yet
+  const key = li.textContent;
+  if (commTop != null && key !== commTop) li.classList.add('cm-new');
+  commTop = key;
+}
+// Count the score up from the last value shown, for the same innings.
+let shownScore = null;
+const calm = () => matchMedia('(prefers-reduced-motion: reduce').matches;
+function tickScore() {
+  const el = $('$sc-runs');
+  if (!el || !live) { shownScore = null; return; }
+  const key = `${live.inns.length}`, to = cur().runs;
+  const from = shownScore && shownScore.key === key ? shownScore.runs : to;
+  shownScore = { key, runs: to };
+  if (to <= from || calm()) return;
+  el.classList.add('ticking');
+  const t0 = performance.now(), dur = Math.min(450, 120 + (to - from) * 60);
+  const step = now => {
+    if (!el.isConnected) return;
+    const k = Math.min(1, (now - t0) / dur), e = 1 - (1 - k) ** 3;
+    el.textContent = Math.round(from + (to - from) * e);
+    if (k < 1) requestAnimationFrame(step); else el.classList.remove('ticking');
+  };
+  el.textContent = from;
+  requestAnimationFrame(step);
 }
 // The whole match, newest first, grouped by innings, with a plain-text copy.
 export function openCommentary(m, title) {
@@ -1471,7 +1502,9 @@ export function boardHTML() {
   return `<div class="board${live.status === 'live' && chasing ? ' pulse' : ''}">
     <div class="board-main">
       <div class="team-line">${esc(team)}${isTest() ? `<span class="dim" style="font-size:.85em">${ORD[live.inns.length - 1]} innings${live.followedOn && live.inns.length === 3 ? ', following on' : ''}${live.status !== 'done' ? ` · Day ${clockOf().day}, ${SESS[clockOf().s].toLowerCase()}` : ''}</span>` : ''}${live.status === 'live' ? '<span class="badge live">Live</span>' : ''}${i.so ? `<span class="badge" style="background:rgba(243,194,76,.16);color:#f3c24c">${esc(cap1(soName(i.so)))}</span>` : ''}${inPP ? '<span class="badge" style="background:rgba(120,190,255,.16);color:#9fd0ff">Powerplay</span>' : ''}${i.freeHit && live.status === 'live' ? '<span class="badge fh">Free hit</span>' : ''}</div>
-      <div class="score-big">${i.runs}/${i.wkts}<small>(${fmtOvers(i.balls)}${cap != null ? `/${fmtOvers(cap)}` : ''} ov)</small></div>
+      <div class="score-big" aria-label="${i.runs} for ${i.wkts}"><span class="sc-runs" id="sc-runs">${i.runs}</span><span class="sc-sep">/</span>${i.wkts}</div>
+      <div class="board-sub">${fmtOvers(i.balls)}${cap != null ? `<span class="dim"> / ${fmtOvers(cap)}</span>` : ''} overs</div>
+      ${heroBar(i, cap, chasing)}
       ${eq ? `<div class="board-eq" style="font-size:clamp(1.15rem,.9rem + 1.2vw,1.6rem);margin-top:8px">${eq}</div>` : ''}
     </div>
     <div class="board-side">
@@ -1484,6 +1517,25 @@ export function boardHTML() {
     </div>
   </div>`;
 }
+return `<div class="hero-bar${chasing ? ' chase' : ''}" role="img" aria-label="${what}"><span style="width:${w}%"></span></div>`;
+
+// A thin bar under the score: how close the chase is, or how much of the innings has gone.
+function heroBar(i, cap, chasing) {
+  if (live.status === 'done') return '';
+  const pct = chasing && i.target > 0 ? i.runs / i.target : cap ? i.balls / cap : null;
+  if (pct == null) return '';
+  const w = Math.max(0, Math.min(100, pct * 100)).toFixed(1);
+  const what = chasing ? `${i.runs} of ${i.target} runs` : `${fmtOvers(i.balls)} of ${fmtOvers(cap)} overs`;
+  return `<div class="hero-bar${chasing ? ' chase' : ''}" role="img" aria-label="${what}"><span style="width:${w}%"></span></div>`;
+}
+// Strike rate against a rough par for the format: green above it, amber near it, red well below.
+function srClass(b) {
+  if (b.balls < 6) return '';
+  const par = isTest() ? 55 : !live.overs ? 90 : live.overs <= 10 ? 150 : live.overs <= 20 ? 130 : 90;
+  const sr = b.runs / b.balls * 100;
+  return sr >= par ? 'sr-hi' : sr >= par * 0.75 ? 'sr-mid' : 'sr-lo';
+}
+const BAT_ICON = '<svg class="bat-ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 1.2l1.2 1.2-2.6 2.6.4.4-6.9 6.9c-.6.6-1.6.6-2.2 0l-.9-.9c-.6-.6-.6-1.6 0-2.2l6.9-6.9.4.4z" fill="currentColor"/><circle cx="3" cy="13" r="1.6" fill="currentColor" opacity=".55"/></svg>';
 
 function bowlerPicker(i) {
   const fsq = playersOf(live, 1 - i.bat);
@@ -1530,8 +1582,8 @@ export function liveHTML(animateLast) {
   const lockPad = i.needBowler;
   const overNo = Math.floor(i.balls / 6) + (i.needBowler ? 1 : 1);
   const strip = !i.needBowler && over.balls.length
-      ? over.balls.map((b, k) => chip(b, animateLast && k === over.balls.length - 1)).join('')
-      : `<span class="empty-over">${i.needBowler ? 'Over complete' : 'New over'}</span>`;
+      ? over.balls.map((b, k) => chip(b, animateLast && k === over.balls.length - 1)).join('') + '<span class="bdot ghost" aria-hidden="true"></span>'.repeat(Math.max(0, 6 - over.legal))
+      : i.needBowler ? '<span class="empty-over">Over complete</span>' : '<span class="bdot ghost" aria-hidden="true"></span>'.repeat(6);
   const prevBowler = i.lastBowler >= 0 ? i.bowlers[i.lastBowler] : null;
   const bowlerOpts = i.bowlers.filter((b, k) => k !== i.lastBowler).map(b => `<option value="${esc(b.name)}"></option>`).join('');
   const prompt = i.needBowler ? `<div class="card prompt-card">
@@ -1546,7 +1598,7 @@ export function liveHTML(animateLast) {
     </div>` : '';
   const dis = lockPad ? ' disabled' : '';
   const sr = b => b.balls ? nf(b.runs / b.balls * 100, 1) : '—';
-  const batRow = (idx, mark) => { const b = i.batters[idx]; return `<tr class="bat-row"><td class="${mark ? 'on-strike' : ''}">${esc(b.name + roleTag(live, i.bat, b.name))}${mark ? ' *' : ''}</td><td class="num"><b>${b.runs}</b></td><td class="num">${b.balls}</td><td class="num">${b.f4}</td><td class="num">${b.f6}</td><td class="num">${sr(b)}</td></tr>`; };
+  const batRow = (idx, mark) => { const b = i.batters[idx]; return `<tr class="bat-row${mark ? ' striker' : ''}"><td class="${mark ? 'on-strike' : ''}">${mark ? BAT_ICON : ''}${esc(b.name + roleTag(live, i.bat, b.name))}${mark ? '<span class="sr-only"> (on strike)</span>' : ''}</td><td class="num"><b>${b.runs}</b></td><td class="num">${b.balls}</td><td class="num">${b.f4}</td><td class="num">${b.f6}</td><td class="num"><span class="sr ${srClass(b)}">${sr(b)}</span></td></tr>`; };
   const lastOvers = i.overs.filter(o => o.balls.length).slice(-5).reverse();
   return `${boardHTML()}
   ${alertsHTML(i)}
@@ -1947,6 +1999,8 @@ export function renderLiveAll(animateLast = false) {
   actions.innerHTML = `${live.status !== 'done' ? `<button type="button" class="btn ghost" data-act="save-match">Save progress</button>` : ''}${live.status !== 'live' ? '<button type="button" class="btn ghost" data-act="rename">Edit names</button>' : ''}<button type="button" class="btn ghost danger" data-act="new">New match</button>`;
   cards.innerHTML = (live.status !== 'live' ? commentaryCardHTML() : '') + daysHTML(live) + live.inns.map((_, k) => scorecardHTML(live, k)).join('');
   paintSituation();
+  tickScore();
+  markNewComm();
   liveCharts(live);
   if (live.status === 'live' && cur().needBowler) setTimeout(() => $('#live-bowler')?.focus({ preventScroll: true }), 30);
 }
