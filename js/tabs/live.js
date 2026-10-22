@@ -468,7 +468,7 @@ function fillCommentary() {
   if (pk && last) pk.textContent = `${last.o ? last.o + ' ' : ''}${last.text}`;
   markNewComm();
 }
-// Slide in the newest commentary line, but one when it's actually new
+// Slide in the newest commentary line, but only when it's actually new.
 let commTop = null;
 function markNewComm() {
   const li = $('#comm-latest li:first-child');
@@ -479,9 +479,9 @@ function markNewComm() {
 }
 // Count the score up from the last value shown, for the same innings.
 let shownScore = null;
-const calm = () => matchMedia('(prefers-reduced-motion: reduce').matches;
+const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 function tickScore() {
-  const el = $('$sc-runs');
+  const el = $('#sc-runs');
   if (!el || !live) { shownScore = null; return; }
   const key = `${live.inns.length}`, to = cur().runs;
   const from = shownScore && shownScore.key === key ? shownScore.runs : to;
@@ -1517,7 +1517,6 @@ export function boardHTML() {
     </div>
   </div>`;
 }
-return `<div class="hero-bar${chasing ? ' chase' : ''}" role="img" aria-label="${what}"><span style="width:${w}%"></span></div>`;
 
 // A thin bar under the score: how close the chase is, or how much of the innings has gone.
 function heroBar(i, cap, chasing) {
@@ -1536,7 +1535,6 @@ function srClass(b) {
   return sr >= par ? 'sr-hi' : sr >= par * 0.75 ? 'sr-mid' : 'sr-lo';
 }
 const BAT_ICON = '<svg class="bat-ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 1.2l1.2 1.2-2.6 2.6.4.4-6.9 6.9c-.6.6-1.6.6-2.2 0l-.9-.9c-.6-.6-.6-1.6 0-2.2l6.9-6.9.4.4z" fill="currentColor"/><circle cx="3" cy="13" r="1.6" fill="currentColor" opacity=".55"/></svg>';
-
 function bowlerPicker(i) {
   const fsq = playersOf(live, 1 - i.bat);
   if (!fsq) return liveField('live-bowler', 'Bowler', '', { list: 'live-bowlers' });
