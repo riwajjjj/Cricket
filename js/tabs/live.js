@@ -1510,12 +1510,14 @@ function quotaHTML(i) {
   };
   const limit = spare ? `${plural(base, 'over')} each, and ${spare === 1 ? 'one bowler' : `${spare} bowlers`} may bowl ${base + 1} (${Math.min(used, spare)} of ${spare} taken)` : `${plural(base, 'over')} each`;
   const sq = playersOf(live, 1 - i.bat), rest = sq ? sq.filter(n => !i.bowlers.some(b => sameName(b.name, n) && b.balls)).length : 0;
-  return `<div class="card">
-    <h2 class="card-title">Overs left</h2>
+  return `<p class="modal-sub" style="margin:16px 0 4px">Overs left</p>
     <div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Bowler</th><th class="num">Bowled</th><th class="num">Left</th><th></th></tr></thead>
-    <tbody>${rows.map(x => { const left = Math.max(0, maxFor(x.b) * 6 - x.b.balls); return `<tr><td>${esc(x.b.name)}</td><td class="num">${fmtOvers(x.b.balls)}</td><td class="num"><b${left ? '' : ' class="dim"'}>${fmtOvers(left)}</b></td><td class="dim" style="font-size:.8rem">${note(x)}</td></tr>`; }).join('')}</tbody></table></div>
-    <p class="hint" style="margin-bottom:0">Limit: ${limit}.${rest ? ` ${plural(rest, 'other player')} can bowl up to ${plural(maxFor({ balls: 0 }), 'over')}.` : ''}</p>
-  </div>`;
+    <tbody>${rows.map(x => {
+    const left = Math.max(0, maxFor(x.b) * 6 - x.b.balls);
+    const open = spare && used < spare && x.b.balls <= base * 6; // could still take one of the spare overs
+    const txt = open ? `${fmtOvers(Math.max(0, base * 6 - x.b.balls))} <span class="dim" style="font-weight:500">+1</span>` : fmtOvers(left);
+    return `<tr><td>${esc(x.b.name)}</td><td class="num">${fmtOvers(x.b.balls)}</td><td class="num"><b${left ? '' : ' class="dim"'}>${txt}</b></td><td class="dim" style="font-size:.8rem">${note(x)}</td></tr>`; }).join('')}</tbody></table></div>
+    <p class="hint" style="margin-bottom:0">Limit: ${limit}.${rest ? ` ${plural(rest, 'other player')} can bowl ${plural(base, 'over')} each.` : ''}${spare && used < spare ? ' “+1” means the bowler could take a spare over.' : ''}</p>`;
 }
 export function liveHTML(animateLast) {
   const i = cur();
@@ -1565,6 +1567,8 @@ export function liveHTML(animateLast) {
           <div class="pad-tools">
             <button type="button" class="btn ghost sm" data-act="undo"${undoStack.length ? '' : ' disabled'}>Undo</button>
             <button type="button" class="btn ghost sm" data-act="swap">Swap strike</button>
+            <button type="button" class="btn ghost sm" data-act="tools" aria-expanded="${toolsOpen}" aria-controls="pad-more">${toolsOpen ? 'Fewer ▴' : 'More ▾'}</button>
+            <div class="pad-more" id="pad-more"${toolsOpen ? '' : ' hidden'}>
             <button type="button" class="btn ghost sm" data-act="retire">Retire batter</button>
             <button type="button" class="btn ghost sm" data-act="penalty">Penalty runs</button>
             ${impactAvail() ? '<button type="button" class="btn ghost sm" data-act="impact">Impact player</button>' : ''}
@@ -1572,6 +1576,7 @@ export function liveHTML(animateLast) {
             <button type="button" class="btn ghost sm" data-act="rename">Edit names</button>
             <button type="button" class="btn ghost sm danger" data-act="end-inn">${isTest() ? 'Declare' : 'End innings'}</button>
             ${isTest() ? '<button type="button" class="btn ghost sm" data-act="draw">End as a draw</button>' : '<button type="button" class="btn ghost sm" data-act="abandon">No result</button>'}
+            </div>
           </div>
           <label class="check ww-toggle"><input type="checkbox" id="ww-on"${store.get('wwOn', false) ? ' checked' : ''}> Wagon wheel: ask where each scoring shot went</label>
           <p class="hint">Keyboard: 0–6 for runs, W for a wicket, U to undo. MORE covers 5s, 7s and overthrows.</p>
@@ -1589,11 +1594,11 @@ export function liveHTML(animateLast) {
         <h2 class="card-title">Bowling</h2>
         <div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th></tr></thead>
         <tbody>${(i.needBowler && prevBowler ? [prevBowler] : [bw]).map(b => `<tr><td>${esc(b.name + roleTag(live, 1 - i.bat, b.name))}</td><td class="num">${fmtOvers(b.balls)}</td><td class="num">${b.maidens}</td><td class="num">${b.runs}</td><td class="num"><b>${b.wkts}</b></td><td class="num">${b.balls ? nf(b.runs / (b.balls / 6)) : '—'}</td></tr>`).join('')}</tbody></table></div>
+        ${quotaHTML(i)}
       </div>
-      ${quotaHTML(i)}
       ${commentaryCardHTML()}
       ${matchupsCard(i)}
-      ${lastOvers.length ? `<div class="card"><h2 class="card-title">Recent overs</h2><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><tbody>${lastOvers.map(o => { const n = i.overs.indexOf(o) + 1; return `<tr><td class="dim">Ov ${n}</td><td>${esc(i.bowlers[o.bowler].name)}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true)).join('')}</span></td><td class="num"><b>${o.runs}</b>${o.wkts ? ` <span class="neg">${o.wkts}w</span>` : ''}</td></tr>`; }).join('')}</tbody></table></div></div>` : ''}
+      ${lastOvers.length ? `<details class="card fold" data-fold="ro"${foldOpen.has('ro') ? ' open' : ''}><summary><h2 class="card-title">Recent overs</h2><span class="fold-peek">Over ${i.overs.indexOf(lastOvers[0]) + 1}: ${lastOvers[0].runs} run${lastOvers[0].runs === 1 ? '' : 's'}${lastOvers[0].wkts ? `, ${plural(lastOvers[0].wkts, 'wicket')}` : ''}</span></summary><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><tbody>${lastOvers.map(o => { const n = i.overs.indexOf(o) + 1; return `<tr><td class="dim">Ov ${n}</td><td>${esc(i.bowlers[o.bowler].name)}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true)).join('')}</span></td><td class="num"><b>${o.runs}</b>${o.wkts ? ` <span class="neg">${o.wkts}w</span>` : ''}</td></tr>`; }).join('')}</tbody></table></div></details>` : ''}
     </div>
   </div>
   ${situationHTML(liveSituation())}
@@ -1923,6 +1928,8 @@ export function liveCharts(full) {
 export function renderLiveAll(animateLast = false) {
   const main = $('#live-main'), actions = $('#live-actions'), cards = $('#live-cards');
   if (!live) {
+    $('#tab-live').classList.remove('match-on');
+    miniBar();
     main.innerHTML = setupHTML();
     setupSync(null);
     actions.innerHTML = '';
@@ -1931,6 +1938,8 @@ export function renderLiveAll(animateLast = false) {
     return;
   }
   main.innerHTML = live.status === 'live' ? liveHTML(animateLast) : live.status === 'break' ? breakHTML() : doneHTML();
+  $('#tab-live').classList.add('match-on');
+  miniBar();
   actions.innerHTML = `${live.status !== 'done' ? `<button type="button" class="btn ghost" data-act="save-match">Save progress</button>` : ''}${live.status !== 'live' ? '<button type="button" class="btn ghost" data-act="rename">Edit names</button>' : ''}<button type="button" class="btn ghost danger" data-act="new">New match</button>`;
   cards.innerHTML = (live.status !== 'live' ? commentaryCardHTML() : '') + daysHTML(live) + live.inns.map((_, k) => scorecardHTML(live, k)).join('');
   paintSituation();
@@ -1938,6 +1947,35 @@ export function renderLiveAll(animateLast = false) {
   if (live.status === 'live' && cur().needBowler) setTimeout(() => $('#live-bowler')?.focus({ preventScroll: true }), 30);
 }
 RENDER.live = () => renderLiveAll();
+
+/* ---------- Phone score bar ----------
+   On a narrow screen, once the scoreboard has scrolled out of sight, a slim bar under the top bar keeps
+   the score, overs and what's needed in view. Tapping it scrolls back to the scoreboard. */
+let miniIO = null;
+function miniBar() {
+  let bar = $('#live-mini');
+  if (!bar) {
+    bar = document.createElement('button');
+    bar.type = 'button'; bar.id = 'live-mini'; bar.className = 'live-mini'; bar.hidden = true;
+    bar.setAttribute('aria-label', 'Back to the scoreboard');
+    bar.addEventListener('click', () => $('#live-main .board')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    document.body.appendChild(bar);
+    window.addEventListener('resize', () => { const t = $('.topbar'); if (t) bar.style.top = `${t.getBoundingClientRect().bottom}px`; });
+  }
+  miniIO?.disconnect();
+  const board = $('#live-main .board');
+  if (!live || live.status === 'done' || !board) { bar.hidden = true; return; }
+  const i = cur(), cap = maxBallsOf(i), left = cap != null ? cap - i.balls : null;
+  const need = i.target != null ? i.target - i.runs : null;
+  const tail = live.status === 'break' ? (i.so ? `${live.teams[1 - i.bat]} need ${i.runs + 1}` : isTest() ? 'Innings break' : `${live.teams[1 - i.bat]} need ${plannedChase().target}`)
+      : need != null && need > 0 ? (left != null ? `Need ${need} off ${left}` : `Need ${need}`) : '';
+  const ppB = ppBallsOf(i);
+  bar.innerHTML = `<b>${esc(live.teams[i.bat])} ${i.runs}/${i.wkts}</b><span>${fmtOvers(i.balls)}${cap != null ? `/${fmtOvers(cap)}` : ''} ov</span>${tail ? `<span class="mm-need">${esc(tail)}</span>` : ''}${live.status === 'live' && ppB != null && i.balls < ppB ? '<span class="mm-tag">PP</span>' : ''}${i.freeHit && live.status === 'live' ? '<span class="mm-tag fh">Free hit</span>' : ''}`;
+  const top = $('.topbar')?.getBoundingClientRect().bottom || 0;
+  bar.style.top = `${top}px`;
+  miniIO = new IntersectionObserver(([en]) => { bar.hidden = en.isIntersecting || en.boundingClientRect.top > 0 || $('#tab-live').hidden; }, { rootMargin: `-${Math.round(top)}px 0px 0px 0px` });
+  miniIO.observe(board);
+}
 
 /* ---------- Wagon wheel ---------- */
 // Field drawn from behind the batter: straight down the ground is up. For a right-hander the off side is on the right.
@@ -2097,10 +2135,18 @@ function matchupsCard(i) {
   const rows = Object.entries(i.mu || {}).map(([k, v]) => { const [bi, ti] = k.split('|').map(Number); return { ...v, bowler: i.bowlers[bi]?.name || '?', batter: i.batters[ti]?.name || '?' }; })
       .filter(r => r.balls || r.outs).sort((a, b) => b.balls - a.balls).slice(0, 8);
   if (!rows.length) return '';
-  return `<div class="card"><h2 class="card-title">Match-ups</h2><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Batter</th><th>Bowler</th><th class="num">R</th><th class="num">B</th><th class="num">SR</th><th class="num">Dots</th><th class="num">Out</th></tr></thead><tbody>
+  const top = rows[0];
+  return `<details class="card fold" data-fold="mu"${foldOpen.has('mu') ? ' open' : ''}><summary><h2 class="card-title">Match-ups</h2><span class="fold-peek">${esc(top.batter)} v ${esc(top.bowler)}: ${top.runs} (${top.balls})</span></summary><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Batter</th><th>Bowler</th><th class="num">R</th><th class="num">B</th><th class="num">SR</th><th class="num">Dots</th><th class="num">Out</th></tr></thead><tbody>
     ${rows.map(r => `<tr><td>${esc(r.batter)}</td><td>${esc(r.bowler)}</td><td class="num"><b>${r.runs}</b></td><td class="num">${r.balls}</td><td class="num">${r.balls ? nf(r.runs / r.balls * 100, 1) : '—'}</td><td class="num">${r.dots}</td><td class="num">${r.outs ? `<span class="neg">${r.outs}</span>` : '—'}</td></tr>`).join('')}
-  </tbody></table></div></div>`;
+  </tbody></table></div></details>`;
 }
+// Which folding cards (match-ups, recent overs) are open, kept across re-renders.
+const foldOpen = new Set();
+$('#tab-live').addEventListener('toggle', e => {
+  const d = e.target;
+  if (!(d instanceof HTMLDetailsElement) || !d.dataset.fold) return;
+  if (d.open) foldOpen.add(d.dataset.fold); else foldOpen.delete(d.dataset.fold);
+}, true);
 
 export function pickRuns(title, note, options, onPick) {
   const body = openModal(title, `<p class="modal-sub">${esc(note)}</p><div class="opt-grid">${options.map(o => `<button type="button" data-v="${o.v}">${esc(o.l)}</button>`).join('')}</div>`);
@@ -2357,7 +2403,16 @@ function renameModal(m = live, onSave = names => renameAll(names)) {
   });
 }
 
+let toolsOpen = false; // the scorer's less-used buttons, behind "More"
 export async function liveAction(action, el) {
+  if (action === 'tools') {
+    toolsOpen = !toolsOpen;
+    const box = $('#pad-more');
+    if (box) box.hidden = !toolsOpen;
+    el.textContent = toolsOpen ? 'Fewer ▴' : 'More ▾'; el.setAttribute('aria-expanded', String(toolsOpen));
+    return;
+  }
+  if (el?.closest?.('.pad-more')) toolsOpen = false; // the menu closes once one of its buttons is used
   if (ballTarget && !['run', 'wkt', 'wd', 'nb', 'b', 'lb', 'more'].includes(action)) ballTarget = null;
   switch (action) {
     case 'start': startMatch(); break;

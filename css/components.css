@@ -709,3 +709,42 @@ details.bbb summary:hover { color: var(--fg); }
 .ww-zone[data-in="1"] { fill: color-mix(in srgb, var(--turf) 8%, transparent); }
 .ww-zone[data-in="1"]:hover { fill: color-mix(in srgb, var(--accent) 26%, transparent); }
 .ww-fine { fill: none; stroke: var(--line); stroke-width: 0.8; stroke-dasharray: 2 3; pointer-events: none; }
+
+/* ---------- Live scorer: less-used buttons behind "More" ---------- */
+.pad-more { display: flex; flex-wrap: wrap; gap: 8px; flex: 1 1 100%; }
+.pad-more[hidden] { display: none; }
+
+/* ---------- Folding cards (match-ups, recent overs) ---------- */
+.fold > summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary .card-title { margin: 0; }
+.fold > summary::after { content: "▸"; margin-left: auto; color: var(--muted); font-size: 0.9rem; }
+.fold[open] > summary::after { content: "▾"; }
+.fold[open] > summary { margin-bottom: 12px; }
+.fold[open] .fold-peek { display: none; }
+.fold-peek { color: var(--muted); font-size: 0.84rem; }
+.fold > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+
+/* ---------- Live scorer page: a smaller header once a match is on; no format picker on this tab ---------- */
+body:has(#tab-live:not([hidden])) .format-picker { display: none; }
+#tab-live.match-on .panel-head .eyebrow, #tab-live.match-on .panel-head .lede { display: none; }
+#tab-live.match-on .panel-head h1 { font-size: clamp(1.3rem, 1rem + 1.2vw, 1.8rem); }
+#tab-live.match-on .panel-head { margin-bottom: 14px; }
+
+/* ---------- Phone score bar ---------- */
+.live-mini {
+  position: fixed; left: 0; right: 0; z-index: 19;
+  display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; overflow: hidden;
+  padding: 8px 16px; border: 0; border-bottom: 1px solid #22392f; border-radius: 0;
+  background: #0f1b17; color: #e8f0eb; font: 500 0.88rem/1.2 var(--f-body); text-align: left; cursor: pointer;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+.live-mini b { font: 800 1.05rem/1 var(--f-display); letter-spacing: 0.02em; white-space: nowrap; }
+.live-mini span { white-space: nowrap; color: #9fb4a8; }
+.live-mini .mm-need { color: #f3c24c; font-weight: 700; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.live-mini .mm-tag { margin-left: auto; padding: 2px 8px; border-radius: 999px; background: rgba(120, 190, 255, 0.16); color: #9fd0ff; font-size: 0.72rem; font-weight: 700; }
+.live-mini .mm-tag.fh { background: #f3c24c; color: #1d1503; }
+.live-mini .mm-tag + .mm-tag { margin-left: 0; }
+.live-mini[hidden], body:has(#tab-live[hidden]) .live-mini { display: none; }
+@media (min-width: 761px) { .live-mini { display: none !important; } }
+@media print { .live-mini { display: none !important; } }
