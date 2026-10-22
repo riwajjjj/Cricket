@@ -722,7 +722,7 @@ details.bbb summary:hover { color: var(--fg); }
 .fold[open] > summary::after { content: "▾"; }
 .fold[open] > summary { margin-bottom: 12px; }
 .fold[open] .fold-peek { display: none; }
-.fold-peek { color: var(--muted); font-size: 0.84rem; }
+.fold-peek { color: var(--muted); font-size: 0.84rem; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fold > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
 
 /* ---------- Live scorer page: a smaller header once a match is on; no format picker on this tab ---------- */

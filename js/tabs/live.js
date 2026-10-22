@@ -451,10 +451,12 @@ function commentaryCardHTML(m = live) {
   const st = commState.get(m.log);
   const hit = st && st.k === m.log.length ? st.out : null;
   if (!hit) { clearTimeout(commTimer); commTimer = setTimeout(fillCommentary, 20); }
-  return `<div class="card comm-card">
-    <div class="sc-head" style="margin-bottom:10px"><h2 class="card-title" style="margin:0">Commentary</h2><button type="button" class="btn ghost sm" data-act="comm">Full commentary</button></div>
+  const last = hit && hit.length ? hit[hit.length - 1] : null;
+  return `<details class="card comm-card fold" data-fold="cm"${isOpen('cm', true) ? ' open' : ''}>
+    <summary><h2 class="card-title">Commentary</h2><span class="fold-peek" id="comm-peek">${last ? esc(`${last.o ? last.o + ' ' : ''}${last.text}`) : ''}</span></summary>
+    <div class="modal-actions" style="justify-content:flex-start;margin:0 0 10px"><button type="button" class="btn ghost sm" data-act="comm">Full commentary</button></div>
     <ul class="cm-list" id="comm-latest">${hit ? latestHTML(hit) : '<li class="cm"><span class="cm-o"></span><span class="cm-t dim">Writing the commentary…</span></li>'}</ul>
-  </div>`;
+  </details>`;
 }
 const latestHTML = list => (list.length ? list.slice(-10).reverse().map(commLi).join('') : '<li class="cm"><span class="cm-o"></span><span class="cm-t dim">The first ball goes here.</span></li>');
 function fillCommentary() {
@@ -462,6 +464,8 @@ function fillCommentary() {
   if (!el || !live) return;
   const list = commentaryOf(live);
   if (list) el.innerHTML = latestHTML(list);
+  const pk = $('#comm-peek'), last = list?.[list.length - 1];
+  if (pk && last) pk.textContent = `${last.o ? last.o + ' ' : ''}${last.text}`;
 }
 // The whole match, newest first, grouped by innings, with a plain-text copy.
 export function openCommentary(m, title) {
@@ -1598,7 +1602,7 @@ export function liveHTML(animateLast) {
       </div>
       ${commentaryCardHTML()}
       ${matchupsCard(i)}
-      ${lastOvers.length ? `<details class="card fold" data-fold="ro"${foldOpen.has('ro') ? ' open' : ''}><summary><h2 class="card-title">Recent overs</h2><span class="fold-peek">Over ${i.overs.indexOf(lastOvers[0]) + 1}: ${lastOvers[0].runs} run${lastOvers[0].runs === 1 ? '' : 's'}${lastOvers[0].wkts ? `, ${plural(lastOvers[0].wkts, 'wicket')}` : ''}</span></summary><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><tbody>${lastOvers.map(o => { const n = i.overs.indexOf(o) + 1; return `<tr><td class="dim">Ov ${n}</td><td>${esc(i.bowlers[o.bowler].name)}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true)).join('')}</span></td><td class="num"><b>${o.runs}</b>${o.wkts ? ` <span class="neg">${o.wkts}w</span>` : ''}</td></tr>`; }).join('')}</tbody></table></div></details>` : ''}
+      ${lastOvers.length ? `<details class="card fold" data-fold="ro"${isOpen('ro') ? ' open' : ''}><summary><h2 class="card-title">Recent overs</h2><span class="fold-peek">Over ${i.overs.indexOf(lastOvers[0]) + 1}: ${lastOvers[0].runs} run${lastOvers[0].runs === 1 ? '' : 's'}${lastOvers[0].wkts ? `, ${plural(lastOvers[0].wkts, 'wicket')}` : ''}</span></summary><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><tbody>${lastOvers.map(o => { const n = i.overs.indexOf(o) + 1; return `<tr><td class="dim">Ov ${n}</td><td>${esc(i.bowlers[o.bowler].name)}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true)).join('')}</span></td><td class="num"><b>${o.runs}</b>${o.wkts ? ` <span class="neg">${o.wkts}w</span>` : ''}</td></tr>`; }).join('')}</tbody></table></div></details>` : ''}
     </div>
   </div>
   ${situationHTML(liveSituation())}
@@ -2136,16 +2140,18 @@ function matchupsCard(i) {
       .filter(r => r.balls || r.outs).sort((a, b) => b.balls - a.balls).slice(0, 8);
   if (!rows.length) return '';
   const top = rows[0];
-  return `<details class="card fold" data-fold="mu"${foldOpen.has('mu') ? ' open' : ''}><summary><h2 class="card-title">Match-ups</h2><span class="fold-peek">${esc(top.batter)} v ${esc(top.bowler)}: ${top.runs} (${top.balls})</span></summary><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Batter</th><th>Bowler</th><th class="num">R</th><th class="num">B</th><th class="num">SR</th><th class="num">Dots</th><th class="num">Out</th></tr></thead><tbody>
+  return `<details class="card fold" data-fold="mu"${isOpen('mu') ? ' open' : ''}><summary><h2 class="card-title">Match-ups</h2><span class="fold-peek">${esc(top.batter)} v ${esc(top.bowler)}: ${top.runs} (${top.balls})</span></summary><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Batter</th><th>Bowler</th><th class="num">R</th><th class="num">B</th><th class="num">SR</th><th class="num">Dots</th><th class="num">Out</th></tr></thead><tbody>
     ${rows.map(r => `<tr><td>${esc(r.batter)}</td><td>${esc(r.bowler)}</td><td class="num"><b>${r.runs}</b></td><td class="num">${r.balls}</td><td class="num">${r.balls ? nf(r.runs / r.balls * 100, 1) : '—'}</td><td class="num">${r.dots}</td><td class="num">${r.outs ? `<span class="neg">${r.outs}</span>` : '—'}</td></tr>`).join('')}
   </tbody></table></div></details>`;
 }
-// Which folding cards (match-ups, recent overs) are open, kept across re-renders.
-const foldOpen = new Set();
+// Which folding cards (commentary, match-ups, recent overs) are open, kept across re-renders.
+// Commentary starts open; the others start folded.
+const foldState = new Map();
+const isOpen = (k, def = false) => foldState.get(k) ?? def;
 $('#tab-live').addEventListener('toggle', e => {
   const d = e.target;
   if (!(d instanceof HTMLDetailsElement) || !d.dataset.fold) return;
-  if (d.open) foldOpen.add(d.dataset.fold); else foldOpen.delete(d.dataset.fold);
+  foldState.set(d.dataset.fold, d.open);
 }, true);
 
 export function pickRuns(title, note, options, onPick) {
