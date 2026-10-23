@@ -13,44 +13,71 @@ const PTS = { w: 12, t: 6, d: 4 };
 const ptsOf = t => ({ ...PTS, ...(t.pts || {}) });
 
 /* ---------- The 2025–27 cycle ----------
-   27 series and 71 Tests, in the order they're scheduled. Each side plays six series, three at home. */
+   27 series and 71 Tests, in the order they're scheduled. Each side plays six series, three at home.
+   Each Test has its first day and ground where they've been announced (from the season pages on
+   Wikipedia, October 2026); series still to be scheduled have none. */
 const WTC_TEAMS = ['Australia', 'Bangladesh', 'England', 'India', 'New Zealand', 'Pakistan', 'South Africa', 'Sri Lanka', 'West Indies'];
 const WTC_SERIES = [
-    ['Sri Lanka', 'Bangladesh', 2, 'Jun 2025'],
-    ['England', 'India', 5, 'Jun–Aug 2025', 'Anderson–Tendulkar Trophy'],
-    ['West Indies', 'Australia', 3, 'Jun–Jul 2025', 'Frank Worrell Trophy'],
-    ['Pakistan', 'South Africa', 2, 'Oct 2025'],
-    ['India', 'West Indies', 2, 'Oct 2025'],
-    ['India', 'South Africa', 2, 'Nov 2025'],
-    ['Australia', 'England', 5, 'Nov 2025–Jan 2026', 'The Ashes'],
-    ['New Zealand', 'West Indies', 3, 'Dec 2025'],
-    ['Bangladesh', 'Pakistan', 2, 'Mar 2026'],
-    ['England', 'New Zealand', 3, 'Jun 2026'],
-    ['West Indies', 'Sri Lanka', 2, 'Jun 2026', 'Sobers–Tissera Trophy'],
-    ['West Indies', 'Pakistan', 2, 'Jul–Aug 2026'],
-    ['Sri Lanka', 'India', 2, 'Aug 2026'],
-    ['Australia', 'Bangladesh', 2, 'Aug 2026'],
-    ['England', 'Pakistan', 3, 'Aug–Sep 2026'],
-    ['South Africa', 'Australia', 3, 'Sep–Oct 2026'],
-    ['Bangladesh', 'West Indies', 2, 'Oct 2026'],
-    ['New Zealand', 'India', 2, 'Oct 2026'],
-    ['South Africa', 'Bangladesh', 2, 'Nov 2026'],
-    ['Pakistan', 'Sri Lanka', 2, 'Nov 2026'],
-    ['Australia', 'New Zealand', 4, 'Dec 2026', 'Trans-Tasman Trophy'],
-    ['South Africa', 'England', 3, 'Dec 2026', 'Basil D’Oliveira Trophy'],
-    ['New Zealand', 'Sri Lanka', 2, 'Jan 2027'],
-    ['India', 'Australia', 5, 'Jan–Feb 2027', 'Border–Gavaskar Trophy'],
+    ['Sri Lanka', 'Bangladesh', 2, 'Jun 2025', '', [['2025-06-17', 'Galle International Stadium, Galle'], ['2025-06-25', 'Sinhalese Sports Club Ground, Colombo']]],
+    ['England', 'India', 5, 'Jun–Aug 2025', 'Anderson–Tendulkar Trophy', [['2025-06-20', 'Headingley, Leeds'], ['2025-07-02', 'Edgbaston, Birmingham'], ['2025-07-10', "Lord's, London"], ['2025-07-23', 'Old Trafford, Manchester'], ['2025-07-31', 'The Oval, London']]],
+    ['West Indies', 'Australia', 3, 'Jun–Jul 2025', 'Frank Worrell Trophy', [['2025-06-25', 'Kensington Oval, Bridgetown'], ['2025-07-03', "National Cricket Stadium, St George's"], ['2025-07-12', 'Sabina Park, Kingston']]],
+    ['India', 'West Indies', 2, 'Oct 2025', '', [['2025-10-02', 'Narendra Modi Stadium, Ahmedabad'], ['2025-10-10', 'Arun Jaitley Stadium, Delhi']]],
+    ['Pakistan', 'South Africa', 2, 'Oct 2025', '', [['2025-10-12', 'Gaddafi Stadium, Lahore'], ['2025-10-20', 'Rawalpindi Cricket Stadium, Rawalpindi']]],
+    ['India', 'South Africa', 2, 'Nov 2025', '', [['2025-11-14', 'Eden Gardens, Kolkata'], ['2025-11-22', 'Assam Cricket Association Stadium, Guwahati']]],
+    ['Australia', 'England', 5, 'Nov 2025–Jan 2026', 'The Ashes', [['2025-11-21', 'Perth Stadium, Perth'], ['2025-12-04', 'The Gabba, Brisbane'], ['2025-12-17', 'Adelaide Oval, Adelaide'], ['2025-12-26', 'Melbourne Cricket Ground, Melbourne'], ['2026-01-04', 'Sydney Cricket Ground, Sydney']]],
+    ['New Zealand', 'West Indies', 3, 'Dec 2025', '', [['2025-12-02', 'Hagley Oval, Christchurch'], ['2025-12-10', 'Basin Reserve, Wellington'], ['2025-12-18', 'Bay Oval, Mount Maunganui']]],
+    ['Bangladesh', 'Pakistan', 2, 'May 2026', '', [['2026-05-08', 'Sher-e-Bangla National Stadium, Dhaka'], ['2026-05-16', 'Sylhet International Cricket Stadium, Sylhet']]],
+    ['England', 'New Zealand', 3, 'Jun 2026', '', [['2026-06-04', "Lord's, London"], ['2026-06-17', 'The Oval, London'], ['2026-06-25', 'Trent Bridge, Nottingham']]],
+    ['West Indies', 'Sri Lanka', 2, 'Jun–Jul 2026', 'Sobers–Tissera Trophy', [['2026-06-25', 'Sir Vivian Richards Stadium, North Sound'], ['2026-07-03', 'Sir Vivian Richards Stadium, North Sound']]],
+    ['West Indies', 'Pakistan', 2, 'Jul–Aug 2026', '', [['2026-07-25', 'Brian Lara Cricket Academy, Trinidad'], ['2026-08-02', "Queen's Park Oval, Port of Spain"]]],
+    ['Australia', 'Bangladesh', 2, 'Aug 2026', '', [['2026-08-13', 'Marrara Oval, Darwin'], ['2026-08-22', 'Great Barrier Reef Arena, Mackay']]],
+    ['Sri Lanka', 'India', 2, 'Aug 2026', '', [['2026-08-15', 'Galle International Stadium, Galle'], ['2026-08-23', 'Sinhalese Sports Club Ground, Colombo']]],
+    ['England', 'Pakistan', 3, 'Aug–Sep 2026', '', [['2026-08-19', 'Headingley, Leeds'], ['2026-08-27', "Lord's, London"], ['2026-09-09', 'Edgbaston, Birmingham']]],
+    ['South Africa', 'Australia', 3, 'Oct 2026', '', [['2026-10-09', 'Kingsmead, Durban'], ['2026-10-18', "St George's Park, Gqeberha"], ['2026-10-27', 'Newlands, Cape Town']]],
+    ['Bangladesh', 'West Indies', 2, 'Oct–Nov 2026', '', [['2026-10-28', 'Sher-e-Bangla National Stadium, Dhaka'], ['2026-11-05', 'Sylhet International Cricket Stadium, Sylhet']]],
+    ['Pakistan', 'Sri Lanka', 2, 'Nov 2026', '', [['2026-11-09', 'Rawalpindi Cricket Stadium, Rawalpindi'], ['2026-11-17', 'Gaddafi Stadium, Lahore']]],
+    ['South Africa', 'Bangladesh', 2, 'Nov 2026', '', [['2026-11-15', 'Wanderers Stadium, Johannesburg'], ['2026-11-23', 'Centurion Park, Centurion']]],
+    ['New Zealand', 'India', 2, 'Nov–Dec 2026', '', [['2026-11-19', 'Basin Reserve, Wellington'], ['2026-11-27', 'Hagley Oval, Christchurch']]],
+    ['Australia', 'New Zealand', 4, 'Dec 2026–Jan 2027', 'Trans-Tasman Trophy', [['2026-12-09', 'Perth Stadium, Perth'], ['2026-12-17', 'Adelaide Oval, Adelaide'], ['2026-12-26', 'Melbourne Cricket Ground, Melbourne'], ['2027-01-04', 'Sydney Cricket Ground, Sydney']]],
+    ['South Africa', 'England', 3, 'Dec 2026–Jan 2027', 'Basil D’Oliveira Trophy', [['2026-12-17', 'Wanderers Stadium, Johannesburg'], ['2026-12-26', 'Centurion Park, Centurion'], ['2027-01-03', 'Newlands, Cape Town']]],
+    ['India', 'Australia', 5, 'Jan–Mar 2027', 'Border–Gavaskar Trophy', [['2027-01-21', 'Vidarbha Cricket Association Stadium, Nagpur'], ['2027-01-29', 'M. A. Chidambaram Stadium, Chennai'], ['2027-02-11', 'Assam Cricket Association Stadium, Guwahati'], ['2027-02-19', 'JSCA International Stadium, Ranchi'], ['2027-02-27', 'Narendra Modi Stadium, Ahmedabad']]],
+    ['New Zealand', 'Sri Lanka', 2, 'Feb 2027', '', [['2027-02-04', 'Bay Oval, Mount Maunganui'], ['2027-02-12', 'Seddon Park, Hamilton']]],
     ['Bangladesh', 'England', 2, 'Feb 2027'],
     ['Sri Lanka', 'South Africa', 2, 'Feb–Mar 2027'],
     ['Pakistan', 'New Zealand', 2, 'Mar 2027'],
 ];
 const mkTest = (s, no) => ({ id: uid(), series: s.id, no, a: s.home, b: s.away, matchId: null, manual: null, nr: false });
+const withWhen = (f, d) => { if (d) { f.date = d[0]; f.venue = d[1]; } return f; };
 export function wtcTemplate() {
     const series = WTC_SERIES.map(([home, away, tests, when, trophy]) => ({ id: uid(), home, away, tests, when, ...(trophy ? { trophy } : {}) }));
-    const fixtures = series.flatMap(s => Array.from({ length: s.tests }, (_, k) => mkTest(s, k + 1)));
+    const fixtures = series.flatMap((s, k) => Array.from({ length: s.tests }, (_, n) => withWhen(mkTest(s, n + 1), WTC_SERIES[k][5]?.[n])));
     fixtures.push({ id: uid(), stage: 'F', a: null, b: null, matchId: null, manual: null, nr: false, venue: 'The Oval, London', date: '2027-06-09', reserve: true });
-    return { id: uid(), created: Date.now(), kind: 'test', name: 'World Test Championship 2025–27', teams: WTC_TEAMS.slice(), pts: { ...PTS }, series, fixtures, overRate: true };
+    return { id: uid(), created: Date.now(), kind: 'test', name: 'World Test Championship 2025–27', teams: WTC_TEAMS.slice(), pts: { ...PTS }, series, fixtures, overRate: true, sched: 2 };
 }
+// A championship made from the earlier template (no dates or grounds): fill in the ones announced since,
+// without touching anything already set, and put the series in date order. Runs once.
+export function updateSchedule(t) {
+    if (!isTestTour(t) || t.sched >= 2 || !t.series || t.series.length !== WTC_SERIES.length) return false;
+    const key = (h, a) => `${h}|${a}`.toLowerCase();
+    const tpl = new Map(WTC_SERIES.map((r, k) => [key(r[0], r[1]), { r, k }]));
+    if (!t.series.every(s => tpl.has(key(s.home, s.away)))) { t.sched = 2; return true; }
+    t.series.forEach(s => {
+        const { r } = tpl.get(key(s.home, s.away));
+        const old = WTC_OLD_WHEN[key(s.home, s.away)];
+        if (r[3] && (!s.when || s.when === old)) s.when = r[3];
+        t.fixtures.filter(f => f.series === s.id).forEach(f => {
+            const d = r[5]?.[f.no - 1];
+            if (!d) return;
+            if (!f.date) f.date = d[0];
+            if (!f.venue) f.venue = d[1];
+        });
+    });
+    t.series.sort((x, y) => tpl.get(key(x.home, x.away)).k - tpl.get(key(y.home, y.away)).k);
+    t.sched = 2;
+    return true;
+}
+// The months the first version of the template gave, so they're only replaced if nobody changed them.
+const WTC_OLD_WHEN = { 'bangladesh|pakistan': 'Mar 2026', 'west indies|sri lanka': 'Jun 2026', 'south africa|australia': 'Sep–Oct 2026', 'bangladesh|west indies': 'Oct 2026', 'new zealand|india': 'Oct 2026', 'australia|new zealand': 'Dec 2026', 'south africa|england': 'Dec 2026', 'new zealand|sri lanka': 'Jan 2027', 'india|australia': 'Jan–Feb 2027' };
 // An empty Test championship: the teams, then series added one at a time.
 export function blankTestTour(name, teams) {
     return { id: uid(), created: Date.now(), kind: 'test', name, teams, pts: { ...PTS }, series: [], fixtures: [{ id: uid(), stage: 'F', a: null, b: null, matchId: null, manual: null, nr: false, reserve: true }], overRate: true };
@@ -246,8 +273,9 @@ function seriesScore(s, st) {
 
 export function renderTestTour(t, main, { busy, persist }) {
     const byId = byIdNow();
+    const sch = updateSchedule(t);
     let rows = testTable(t, byId);
-    if (syncFinal(t, rows, byId)) persist();
+    if (syncFinal(t, rows, byId) || sch) persist();
     const P = ptsOf(t);
     const league = leagueOf(t), fin = finalOf(t);
     const done = league.filter(f => played(f, byId)).length;
