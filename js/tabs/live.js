@@ -1121,7 +1121,7 @@ function soFormHTML() {
     </div>
     <p class="hint">One over a side and two wickets, so a third batter comes in only after a wicket. ${!second && round === 1 ? 'The side that batted second in the match bats first. ' : ''}Batters out in an earlier super over, and its bowler, can’t play in the next one. ${second ? '' : 'Skip it and the match stays a tie.'}</p>
     <p class="err-text" id="so-err"></p>
-    <div class="modal-actions" style="justify-content:flex-start"><button type="button" class="btn" data-act="so-start">${second ? 'Start the chase' : `Start the ${soName(round)}`}</button>${second ? `<button type="button" class="btn ghost" data-act="undo"${undoStack.length ? '' : ' disabled'}>Undo last ball</button>` : ''}</div>
+    <div class="modal-actions" style="justify-content:flex-start"><button type="button" class="btn" data-act="so-start">${second ? 'Start the chase' : `Start the ${soName(round)}`}</button>${second ? `<button type="button" class="btn ghost" data-act="undo"${canUndo() ? '' : ' disabled'}>Undo last ball</button>` : ''}</div>
   </div>`;
 }
 export function computeResult() {
@@ -1263,8 +1263,27 @@ export function setBowler(name) {
   if (err) { const el = $('#live-bowler-err'); if (el) el.textContent = err; }
 }
 
+// Undo works from saved copies of the match for the last 60 actions (40 after a reload). Past those,
+// it rebuilds the match from its ball-by-ball record without the last action, so it never runs out.
+export const canUndo = () => !!live && (undoStack.length > 0 || (canEdit() && live.log.length > 0));
+// Go back to just before log entry n: everything from there on is removed.
+function rewindTo(n, keepUndo) {
+  const wasDone = live.status === 'done', snap = JSON.stringify(live);
+  const err = rebuild(live.log.slice(0, n));
+  if (err) return err;
+  if (keepUndo) { undoStack.push(snap); if (undoStack.length > 60) undoStack.shift(); }
+  saveLive();
+  if (wasDone && live.status !== 'done') saveMatch(true);
+  renderLiveAll();
+  return null;
+}
 export function undo() {
-  if (!undoStack.length) { toast('Nothing to undo'); return; }
+  if (!undoStack.length) {
+    if (!canUndo()) { toast('Nothing to undo'); return; }
+    const err = rewindTo(live.log.length - 1, false);
+    toast(err ? `Can't undo: ${err}.` : 'Last action undone');
+    return;
+  }
   const wasDone = live && live.status === 'done';
   live = JSON.parse(undoStack.pop());
   saveLive();
@@ -1620,7 +1639,7 @@ export function liveHTML(animateLast) {
             <button type="button" data-act="more" class="kx" aria-label="Other runs: fives, overthrows"${dis}>MORE</button>
           </div>
           <div class="pad-tools">
-            <button type="button" class="btn ghost sm" data-act="undo"${undoStack.length ? '' : ' disabled'}>Undo</button>
+            <button type="button" class="btn ghost sm" data-act="undo"${canUndo() ? '' : ' disabled'}>Undo</button>
             <button type="button" class="btn ghost sm" data-act="swap">Swap strike</button>
             <button type="button" class="btn ghost sm" data-act="tools" aria-expanded="${toolsOpen}" aria-controls="pad-more">${toolsOpen ? 'Fewer ▴' : 'More ▾'}</button>
             <div class="pad-more" id="pad-more"${toolsOpen ? '' : ' hidden'}>
@@ -1629,6 +1648,7 @@ export function liveHTML(animateLast) {
             ${impactAvail() ? '<button type="button" class="btn ghost sm" data-act="impact">Impact player</button>' : ''}
             ${live.overs && !isTest() && !i.so ? '<button type="button" class="btn ghost sm" data-act="rain">Rain / stoppage</button>' : ''}
             <button type="button" class="btn ghost sm" data-act="rename">Edit names</button>
+            ${canEdit() ? '<button type="button" class="btn ghost sm" data-act="goback">Go back to an over</button>' : ''}
             <button type="button" class="btn ghost sm danger" data-act="end-inn">${isTest() ? 'Declare' : 'End innings'}</button>
             ${isTest() ? '<button type="button" class="btn ghost sm" data-act="draw">End as a draw</button>' : '<button type="button" class="btn ghost sm" data-act="abandon">No result</button>'}
             </div>
@@ -1787,7 +1807,8 @@ export function breakHTML() {
       <button type="button" class="btn" data-act="start-2nd">Start ${test ? ORD[n] : 'second'} innings</button>
       ${test ? '<button type="button" class="btn ghost" data-act="draw">End as a draw</button>' : '<button type="button" class="btn ghost" data-act="abandon">No result</button>'}
       ${impactAvail() ? '<button type="button" class="btn ghost" data-act="impact">Impact player</button>' : ''}
-      <button type="button" class="btn ghost" data-act="undo"${undoStack.length ? '' : ' disabled'}>Undo last ball</button>
+      <button type="button" class="btn ghost" data-act="undo"${canUndo() ? '' : ' disabled'}>Undo last ball</button>
+      ${canEdit() ? '<button type="button" class="btn ghost" data-act="goback">Go back to an over</button>' : ''}
     </div>
   </div>
   ${test ? `<div class="grid-2">${testCardHTML()}${testOddsHTML()}</div>` : ''}`;
@@ -1854,7 +1875,7 @@ function coreStart2(s, ns, bw, bat, lost = 0) {
 export function doneHTML() {
   return `${boardHTML()}<div class="card result-banner"><h2 class="card-title">Result</h2><p style="margin:0;font:700 1.4rem/1.25 var(--f-display);letter-spacing:.02em">${esc(live.result)}</p>
     <p class="hint">${live.inns.map(i => `${esc(live.teams[i.bat])} ${i.runs}/${i.wkts} (${i.so ? soName(i.so) : `${fmtOvers(i.balls)} ov`})`).join(' · ')}</p>
-    <div class="modal-actions" style="justify-content:flex-start"><button type="button" class="btn" data-act="save-match">Save match</button><button type="button" class="btn ghost" data-act="image">Share as image</button><button type="button" class="btn ghost" data-act="sc-image">Scorecard image</button><button type="button" class="btn ghost" data-act="print">Print or save as PDF</button><button type="button" class="btn ghost" data-act="csv">Scorecard CSV</button><button type="button" class="btn ghost" data-act="undo"${undoStack.length ? '' : ' disabled'}>Undo last ball</button></div></div>${soDue() ? soFormHTML() : ''}`;
+    <div class="modal-actions" style="justify-content:flex-start"><button type="button" class="btn" data-act="save-match">Save match</button><button type="button" class="btn ghost" data-act="image">Share as image</button><button type="button" class="btn ghost" data-act="sc-image">Scorecard image</button><button type="button" class="btn ghost" data-act="print">Print or save as PDF</button><button type="button" class="btn ghost" data-act="csv">Scorecard CSV</button><button type="button" class="btn ghost" data-act="undo"${canUndo() ? '' : ' disabled'}>Undo last ball</button>${canEdit() ? '<button type="button" class="btn ghost" data-act="goback">Go back to an over</button>' : ''}</div></div>${soDue() ? soFormHTML() : ''}`;
 }
 
 // A ball in an over. In the live match it's a button that opens the edit dialog.
@@ -2412,6 +2433,37 @@ function penaltyModal() {
   });
 }
 
+// Go back to the start of any over: the match is rebuilt from its ball-by-ball record up to that point.
+function goBackModal() {
+  if (!live || !canEdit()) return;
+  const opts = [];
+  live.inns.forEach((inn, k) => {
+    let r = 0, w = 0;
+    inn.overs.forEach((o, n) => {
+      const li = o.balls.find(b => Number.isInteger(b.li))?.li;
+      if (li != null) opts.push({ li, l: `${live.teams[inn.bat]}, ${innName(live, k)} · start of over ${n + 1} (${r}/${w})` });
+      r += o.runs; w += o.wkts;
+    });
+  });
+  if (!opts.length) { toast('No overs scored yet'); return; }
+  opts.reverse();
+  const body = openModal('Go back to an over', `
+    <p class="hint" style="margin:-6px 0 12px">Everything scored from that point on is removed, and scoring carries on from the start of the over, with the same bowler. Undo brings it all back.</p>
+    ${selectField('gb-to', 'Go back to', opts.map(o => ({ v: String(o.li), l: o.l })), String(opts[0].li))}
+    <p class="hint" id="gb-n"></p>
+    <p class="err-text" id="gb-err"></p>
+    <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Go back</button></div>`);
+  const count = () => { const n = live.log.length - Number($('#gb-to', body).value); $('#gb-n', body).textContent = `${plural(n, 'action')} will be removed (balls, bowler changes and the like).`; };
+  body.addEventListener('change', count); count();
+  body.addEventListener('click', e => {
+    const x = e.target.closest('[data-x]');
+    if (!x) return;
+    if (x.dataset.x === 'cancel') { closeModal(); return; }
+    const err = rewindTo(Number($('#gb-to', body).value), true);
+    if (err) { $('#gb-err', body).textContent = `Can't go back there: ${err}.`; return; }
+    closeModal(); toast('Gone back. Undo to bring it back.');
+  });
+}
 function renameModal(m = live, onSave = names => renameAll(names)) {
   const inp = (id, v) => `<input id="${id}" type="text" maxlength="30" autocomplete="off" value="${esc(v)}" aria-label="Name">`;
   // Squad players who never batted or bowled (fielders, the player replaced by the impact player) can be renamed too.
@@ -2502,6 +2554,7 @@ export async function liveAction(action, el) {
     case 'print': printScorecard(live); break;
     case 'rename': renameModal(); break;
     case 'undo': undo(); break;
+    case 'goback': goBackModal(); break;
     case 'swap': act({ t: 'swap' }, coreSwap); break;
     case 'swap-teams': swapSetupTeams(); break;
     case 'edit-ball': openEditBall(Number(el.dataset.li)); break;
