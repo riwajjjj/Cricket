@@ -2,7 +2,7 @@
    Strategy: answer from the cache straight away, then refresh that file from the network in the
    background, so edits reach users on their next visit. Change VERSION when files are added or removed,
    and whenever JS modules change in ways that depend on each other (new exports or imports). */
-const VERSION = 'crease-v39';
+const VERSION = 'crease-v40';
 const ASSETS = [
   './',
   './index.html',
@@ -49,6 +49,7 @@ const ASSETS = [
   './js/tabs/players.js',
   './js/tabs/saved.js',
   './js/tabs/tournament.js',
+  './js/tabs/wtc.js',
 ];
 
 self.addEventListener('install', e => {

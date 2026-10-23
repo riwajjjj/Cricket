@@ -1320,7 +1320,7 @@ export function setupHTML() {
       ${liveField('ls-ta', 'Batting first', tA)}
       ${liveField('ls-tb', 'Bowling first', tB)}
       ${liveField('ls-ov', 'Overs per side', prefill?.overs ?? f.overs ?? '', { im: 'numeric', max: 3 })}
-      ${selectField('ls-type', 'Match type', [{ v: 'limited', l: 'Limited overs' }, { v: 'test', l: 'Test: two innings each' }], f.key === 'Test' && !prefill ? 'test' : 'limited')}
+      ${selectField('ls-type', 'Match type', [{ v: 'limited', l: 'Limited overs' }, { v: 'test', l: 'Test: two innings each' }], prefill?.test || (f.key === 'Test' && !prefill) ? 'test' : 'limited')}
       ${selectField('ls-imp', 'Impact Player rule', [{ v: '0', l: 'Off' }, { v: '1', l: 'On: choose the impact player from your bench' }], prefill?.impact ? '1' : '0')}
       ${selectField('ls-days', 'Days left when play starts (sets the follow-on)', [5, 4, 3, 2, 1].map(d => ({ v: String(d), l: `${d} day${d > 1 ? 's' : ''} · follow-on at ${FOLLOW_ON[d]}` })), '5')}
     </div>

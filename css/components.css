@@ -757,6 +757,7 @@ body:has(#tab-live:not([hidden])) .format-picker { display: none; }
 .sc-runs.ticking { color: #f3c24c; }
 .board-sub { margin-top: 6px; font: 600 0.95rem/1.2 var(--f-body); color: #cfe0d6; font-variant-numeric: tabular-nums; }
 .board-sub .dim { color: #7d968a; }
+.board-sub .dot-sep { color: #5f7a6c; margin: 0 4px; }
 .hero-bar { margin-top: 10px; height: 5px; max-width: 340px; border-radius: 99px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
 .hero-bar span { display: block; height: 100%; border-radius: inherit; background: #7d968a; transition: width 0.45s cubic-bezier(.2,.8,.2,1); }
 .hero-bar.chase span { background: linear-gradient(90deg, var(--turf), #f3c24c); }
@@ -783,6 +784,17 @@ body:has(#tab-live:not([hidden])) .format-picker { display: none; }
 /* motion */
 .fold[open] > :not(summary) { animation: foldIn 0.22s ease-out; }
 @keyframes foldIn { from { opacity: 0; transform: translateY(-6px); } }
+.fold > summary::after { transition: transform 0.2s ease; }
 .cm.cm-new { animation: cmIn 0.28s cubic-bezier(.2,.8,.2,1); }
 @keyframes cmIn { from { opacity: 0; transform: translateX(-12px); background: color-mix(in srgb, var(--accent) 12%, transparent); } }
 @media (prefers-reduced-motion: reduce) { .hero-bar span, .bdot { transition: none; } }
+
+/* ---------- Test championship ---------- */
+.w-series { border-top: 1px solid var(--line); padding: 12px 0 4px; }
+.w-series:first-of-type { border-top: 0; padding-top: 0; }
+.w-series > summary { align-items: center; }
+.w-series > summary .w-s-name { flex: 1 1 auto; min-width: 0; }
+.w-series > summary .fold-peek { flex-basis: 100%; order: 3; white-space: normal; }
+.w-series[open] > summary .fold-peek { display: block; }
+.w-series .fx-row:first-of-type { border-top: 1px solid var(--line); }
+.tf-tpl { padding: 12px 14px; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent); }

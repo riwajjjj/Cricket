@@ -6,10 +6,11 @@ import { finishedMatches, nameKey, parseDismissal } from '../records.js';
 import { RENDER, appHooks, showTab } from '../router.js';
 import { TIEBREAKS, decided, fixtureOutcome, nrrOf, pointsTable, qualification } from '../stats.js';
 import { closeModal, confirmBox, openModal, toast } from '../ui.js';
-import { $, esc, nf, plural, store, uid } from '../utils.js';
+import { $, $$, esc, nf, plural, store, uid } from '../utils.js';
 import { clearLive, live, matchHooks, openScorecard, setupFromFixture } from './live.js';
 import { loadNRR } from './nrr.js';
 import { saveMatch } from './saved.js';
+import { blankTestTour, isTestTour, renderTestTour, testTourAction, testTourForm, wtcTemplate } from './wtc.js';
 
 const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 const list = () => { const v = store.get('tournaments', []); return Array.isArray(v) ? v : []; };
@@ -813,6 +814,10 @@ RENDER.tournament = function renderTournament() {
   sel.hidden = ts.length < 2;
   $('#tr-edit').hidden = $('#tr-delete').hidden = !t;
   $('#tr-title').textContent = t ? t.name : 'Tournaments';
+  const lede = $('#tab-tournament .lede');
+  if (lede) lede.textContent = isTestTour(t)
+      ? 'Series of Tests and a table ranked by the percentage of points won, the way the World Test Championship works. Score a Test from here and its result is filled in when it finishes.'
+      : 'Teams, fixtures and a points table that keeps itself up to date. Score a fixture from here and its result, net run rate and player stats are filled in when it finishes.';
   const main = $('#tr-main');
   if (!t) {
     main.innerHTML = `<div class="empty-state" style="text-align:left">
@@ -821,6 +826,7 @@ RENDER.tournament = function renderTournament() {
       <button type="button" class="btn" data-tr="new">Create a tournament</button></div>`;
     return;
   }
+  if (isTestTour(t)) { renderTestTour(t, main, { busy: f => busy(t, f), persist: () => update(t) }); return; }
   const byId = new Map(finishedMatches().map(m => [m.id, m]));
   if (syncFinal(t, byId)) update(t);
   const rows = table(t);
@@ -895,34 +901,62 @@ RENDER.tournament = function renderTournament() {
 /* ---------- Editing a tournament ---------- */
 function tournamentForm(t) {
   const body = openModal(t ? 'Edit tournament' : 'New tournament', `
+    ${t ? '' : `<div class="tf-tpl"><p class="modal-sub" style="margin:0 0 8px">Start from a real one</p>
+      <button type="button" class="btn ghost" data-x="wtc" style="white-space:normal;height:auto;min-height:40px;text-align:left">ICC World Test Championship 2025–27</button>
+      <p class="hint" style="margin:6px 0 0">All nine teams, the 27 series (71 Tests) in order, the points for a win, tie and draw, the percentage table, over-rate penalties and the final at The Oval.</p></div>
+    <div class="fields" style="margin-top:14px"><div class="field wide"><div class="lab"><label for="tf-kind">Or make your own</label></div><select id="tf-kind"><option value="league">Limited-overs league</option><option value="test">Test championship (like the WTC)</option></select></div></div>`}
     <div class="fields">
       <div class="field wide"><div class="lab"><label for="tf-name">Name</label></div><input id="tf-name" type="text" maxlength="50" autocomplete="off" value="${esc(t?.name || '')}" placeholder="e.g. Valley Premier League 2026"></div>
       <div class="field"><div class="lab"><label for="tf-overs">Overs per side</label></div><input id="tf-overs" type="text" inputmode="numeric" autocomplete="off" value="${esc(t?.overs ?? 20)}"></div>
       <div class="field wide"><div class="lab"><label for="tf-teams">Teams, one per line</label></div><textarea id="tf-teams" rows="6" spellcheck="false" placeholder="Falcons | Riverside Oval&#10;Rhinos | Hill Park&#10;Tigers&#10;Eagles">${esc((t?.teams || []).map(n => n + (t.grounds?.[n] ? ` | ${t.grounds[n]}` : '')).join('\n'))}</textarea></div>
     </div>
-    <p class="modal-sub" style="margin-top:14px">Points</p>
+    <p class="modal-sub tf-lo" style="margin-top:14px">Points</p>
     <div class="fields three">
       <div class="field"><div class="lab"><label for="tf-w">Win</label></div><input id="tf-w" type="text" inputmode="numeric" value="${esc(t?.pts?.w ?? 2)}"></div>
       <div class="field"><div class="lab"><label for="tf-t">Tie</label></div><input id="tf-t" type="text" inputmode="numeric" value="${esc(t?.pts?.t ?? 1)}"></div>
       <div class="field"><div class="lab"><label for="tf-nr">No result</label></div><input id="tf-nr" type="text" inputmode="numeric" value="${esc(t?.pts?.nr ?? 1)}"></div>
     </div>
-    <p class="modal-sub" style="margin-top:14px">Rules</p>
+    <p class="modal-sub tf-lo" style="margin-top:14px">Rules</p>
     <div class="fields three">
       <div class="field"><div class="lab"><label for="tf-tie">Tied matches</label></div><select id="tf-tie"><option value="share"${t?.tieRule === 'so' ? '' : ' selected'}>Points shared</option><option value="so"${t?.tieRule === 'so' ? ' selected' : ''}>Super over decides</option></select></div>
       <div class="field"><div class="lab"><label for="tf-tb">Level on points</label></div><select id="tf-tb">${Object.entries(TIEBREAKS).map(([k, l]) => `<option value="${k}"${(t?.tiebreak || 'nrr') === k ? ' selected' : ''}>${esc(l[0].toUpperCase() + l.slice(1))}</option>`).join('')}</select></div>
       <div class="field"><div class="lab"><label for="tf-q">Teams that go through</label></div><input id="tf-q" type="text" inputmode="numeric" autocomplete="off" value="${esc(Number.isInteger(t?.qualify) ? t.qualify : '')}" placeholder="Top 4"></div>
     </div>
-    <label class="check" style="margin-top:12px"><input type="checkbox" id="tf-imp"${t?.impact ? ' checked' : ''}> Impact Player rule: each side can swap one player for a bench substitute during the match</label>
-    <p class="hint">After a team's name you can add its home ground, like “Chennai | Chepauk”. The first team named in a fixture is at home. With “Super over decides”, the super-over winner of a tied match gets the points for a win. Knockouts always use the super over. Leave “Teams that go through” empty for the top 4 (top 2 with four teams or fewer), or enter 0 to hide the qualification card.</p>
+    <label class="check tf-lo" style="margin-top:12px"><input type="checkbox" id="tf-imp"${t?.impact ? ' checked' : ''}> Impact Player rule: each side can swap one player for a bench substitute during the match</label>
+    <p class="hint tf-lo">After a team's name you can add its home ground, like “Chennai | Chepauk”. The first team named in a fixture is at home. With “Super over decides”, the super-over winner of a tied match gets the points for a win. Knockouts always use the super over. Leave “Teams that go through” empty for the top 4 (top 2 with four teams or fewer), or enter 0 to hide the qualification card.</p>
     ${t ? '<p class="hint">Renaming a team here keeps its fixtures, as long as it stays on the same line. Removing a team removes its fixtures.</p>' : ''}
     <p class="err-text" id="tf-err"></p>
     <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">${t ? 'Save changes' : 'Create tournament'}</button></div>`, { wide: true });
+  // A Test championship only needs a name and the teams; the series come next.
+  const kindSync = () => {
+    const test = $('#tf-kind', body)?.value === 'test';
+    ['#tf-overs', '#tf-w', '#tf-t', '#tf-nr', '#tf-tie', '#tf-tb', '#tf-q'].forEach(s => { const el = $(s, body)?.closest('.field'); if (el) el.hidden = test; });
+    $$('.tf-lo', body).forEach(el => { el.hidden = test; });
+  };
+  body.addEventListener('change', e => { if (e.target.id === 'tf-kind') kindSync(); });
   body.addEventListener('click', e => {
     const x = e.target.closest('[data-x]');
     if (!x) return;
     if (x.dataset.x === 'cancel') { closeModal(); return; }
+    if (x.dataset.x === 'wtc') {
+      const nt = wtcTemplate();
+      update(nt); store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
+      toast('World Test Championship 2025–27 created');
+      return;
+    }
     const err = $('#tf-err', body);
     const name = $('#tf-name', body).value.trim();
+    if (!t && $('#tf-kind', body)?.value === 'test') {
+      const tl = $('#tf-teams', body).value.split('\n').map(s => s.split('|')[0].trim().replace(/\s+/g, ' ')).filter(Boolean);
+      if (!name) { err.textContent = 'Give the championship a name.'; return; }
+      if (tl.length < 2) { err.textContent = 'Add at least two teams.'; return; }
+      const dup2 = tl.find((n, k) => tl.findIndex(y => same(y, n)) !== k);
+      if (dup2) { err.textContent = `“${dup2}” is listed twice.`; return; }
+      const nt = blankTestTour(name, tl);
+      update(nt); store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
+      toast('Championship created. Add the series next.');
+      return;
+    }
     const overs = Number($('#tf-overs', body).value.trim());
     const lines = $('#tf-teams', body).value.split('\n').map(s => s.trim().replace(/\s+/g, ' ')).filter(Boolean);
     const teams = lines.map(l => l.split('|')[0].trim()).filter(Boolean);
@@ -1024,7 +1058,7 @@ async function scoreFixture(t, f) {
     saveMatch(true);
   }
   clearLive();
-  setupFromFixture({ ta: f.a, tb: f.b, overs: t.overs, impact: !!t.impact, link: { tid: t.id, fid: f.id }, label: `${t.name}${f.stage ? ` ${STAGE[f.stage].toLowerCase()}` : ''}: ${f.a} v ${f.b}${t.grounds?.[f.a] ? ` at ${t.grounds[f.a]}` : ''}` });
+  setupFromFixture({ ta: f.a, tb: f.b, overs: isTestTour(t) ? '' : t.overs, test: isTestTour(t), impact: !isTestTour(t) && !!t.impact, link: { tid: t.id, fid: f.id }, label: `${t.name}${f.stage ? ` ${STAGE[f.stage].toLowerCase()}` : ''}: ${f.a} v ${f.b}${f.venue || t.grounds?.[f.a] ? ` at ${f.venue || t.grounds[f.a]}` : ''}` });
   showTab('live', { scrollTop: true });
 }
 
@@ -1215,7 +1249,7 @@ function rrForm(t) {
 
 /* ---------- Wiring ---------- */
 $('#tr-new').addEventListener('click', () => tournamentForm(null));
-$('#tr-edit').addEventListener('click', () => { const t = active(); if (t) tournamentForm(t); });
+$('#tr-edit').addEventListener('click', () => { const t = active(); if (!t) return; if (isTestTour(t)) testTourForm(t, () => { update(t); RENDER.tournament(); }); else tournamentForm(t); });
 $('#tr-delete').addEventListener('click', async () => {
   const t = active();
   if (!t) return;
@@ -1240,6 +1274,7 @@ $('#tr-main').addEventListener('click', async e => {
   if (a === 'new') { tournamentForm(null); return; }
   if (!t) return;
   const f = t.fixtures.find(x => x.id === b.dataset.f);
+  if (isTestTour(t) && await testTourAction(t, a, f, b, { busy: x => busy(t, x), save: () => { update(t); RENDER.tournament(); } })) return;
   switch (a) {
     case 'rr': rrForm(t); break;
     case 'import': importForm(t); break;
