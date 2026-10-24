@@ -798,3 +798,13 @@ body:has(#tab-live:not([hidden])) .format-picker { display: none; }
 .w-series[open] > summary .fold-peek { display: block; }
 .w-series .fx-row:first-of-type { border-top: 1px solid var(--line); }
 .tf-tpl { padding: 12px 14px; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+/* ---------- Bilateral tour ---------- */
+.tour-sum { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.tour-leg { display: flex; flex-direction: column; gap: 3px; padding: 12px 14px; border-radius: 12px; background: var(--raise); border: 1px solid var(--line); }
+.tour-leg span { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent-text); }
+.tour-leg b { font: 700 1.05rem/1.25 var(--f-display); letter-spacing: 0.01em; }
+.tour-leg em { font-style: normal; font-size: 0.8rem; color: var(--muted); }
+.t-leg > summary .card-title { flex: 1 1 auto; }
+.t-leg > summary .fold-peek { flex-basis: 100%; order: 3; white-space: normal; }
+.t-leg .fx-row:first-of-type { border-top: 1px solid var(--line); }

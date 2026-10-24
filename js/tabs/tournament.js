@@ -11,6 +11,7 @@ import { clearLive, live, matchHooks, openScorecard, setupFromFixture } from './
 import { loadNRR } from './nrr.js';
 import { saveMatch } from './saved.js';
 import { blankTestTour, isTestTour, renderTestTour, testTourAction, testTourForm, wtcTemplate } from './wtc.js';
+import { blankTour, indNzTemplate, isTour, legOf, matchName, renderTour, tourAction, tourForm, tourMatchSetup } from './tour.js';
 
 const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 const list = () => { const v = store.get('tournaments', []); return Array.isArray(v) ? v : []; };
@@ -815,9 +816,11 @@ RENDER.tournament = function renderTournament() {
   $('#tr-edit').hidden = $('#tr-delete').hidden = !t;
   $('#tr-title').textContent = t ? t.name : 'Tournaments';
   const lede = $('#tab-tournament .lede');
-  if (lede) lede.textContent = isTestTour(t)
-      ? 'Series of Tests and a table ranked by the percentage of points won, the way the World Test Championship works. Score a Test from here and its result is filled in when it finishes.'
-      : 'Teams, fixtures and a points table that keeps itself up to date. Score a fixture from here and its result, net run rate and player stats are filled in when it finishes.';
+  if (lede) lede.textContent = isTour(t)
+      ? 'A tour with its T20I, ODI and Test series in one place. Score a match from here in the right format and the series score keeps itself up to date.'
+      : isTestTour(t)
+          ? 'Series of Tests and a table ranked by the percentage of points won, the way the World Test Championship works. Score a Test from here and its result is filled in when it finishes.'
+          : 'Teams, fixtures and a points table that keeps itself up to date. Score a fixture from here and its result, net run rate and player stats are filled in when it finishes.';
   const main = $('#tr-main');
   if (!t) {
     main.innerHTML = `<div class="empty-state" style="text-align:left">
@@ -827,6 +830,7 @@ RENDER.tournament = function renderTournament() {
     return;
   }
   if (isTestTour(t)) { renderTestTour(t, main, { busy: f => busy(t, f), persist: () => update(t) }); return; }
+  if (isTour(t)) { renderTour(t, main, { busy: f => busy(t, f) }); return; }
   const byId = new Map(finishedMatches().map(m => [m.id, m]));
   if (syncFinal(t, byId)) update(t);
   const rows = table(t);
@@ -902,9 +906,9 @@ RENDER.tournament = function renderTournament() {
 function tournamentForm(t) {
   const body = openModal(t ? 'Edit tournament' : 'New tournament', `
     ${t ? '' : `<div class="tf-tpl"><p class="modal-sub" style="margin:0 0 8px">Start from a real one</p>
-      <button type="button" class="btn ghost" data-x="wtc" style="white-space:normal;height:auto;min-height:40px;text-align:left">ICC World Test Championship 2025–27</button>
-      <p class="hint" style="margin:6px 0 0">All nine teams, the 27 series (71 Tests) in order, the points for a win, tie and draw, the percentage table, over-rate penalties and the final at The Oval.</p></div>
-    <div class="fields" style="margin-top:14px"><div class="field wide"><div class="lab"><label for="tf-kind">Or make your own</label></div><select id="tf-kind"><option value="league">Limited-overs league</option><option value="test">Test championship (like the WTC)</option></select></div></div>`}
+      <div class="modal-actions" style="justify-content:flex-start;margin:0"><button type="button" class="btn ghost" data-x="wtc" style="white-space:normal;height:auto;min-height:40px;text-align:left">ICC World Test Championship 2025–27</button><button type="button" class="btn ghost" data-x="indnz" style="white-space:normal;height:auto;min-height:40px;text-align:left">India tour of New Zealand 2026</button></div>
+      <p class="hint" style="margin:6px 0 0">The WTC: all nine teams, the 27 series (71 Tests) with dates and grounds, the percentage table, over-rate penalties and the final at The Oval. The tour: 5 T20Is, 5 ODIs and 2 Tests with dates and grounds; the Tests also count in the WTC.</p></div>
+    <div class="fields" style="margin-top:14px"><div class="field wide"><div class="lab"><label for="tf-kind">Or make your own</label></div><select id="tf-kind"><option value="league">Limited-overs league</option><option value="test">Test championship (like the WTC)</option><option value="tour">Bilateral tour (T20Is, ODIs and Tests)</option></select></div></div>`}
     <div class="fields">
       <div class="field wide"><div class="lab"><label for="tf-name">Name</label></div><input id="tf-name" type="text" maxlength="50" autocomplete="off" value="${esc(t?.name || '')}" placeholder="e.g. Valley Premier League 2026"></div>
       <div class="field"><div class="lab"><label for="tf-overs">Overs per side</label></div><input id="tf-overs" type="text" inputmode="numeric" autocomplete="off" value="${esc(t?.overs ?? 20)}"></div>
@@ -929,7 +933,7 @@ function tournamentForm(t) {
     <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">${t ? 'Save changes' : 'Create tournament'}</button></div>`, { wide: true });
   // A Test championship only needs a name and the teams; the series come next.
   const kindSync = () => {
-    const test = $('#tf-kind', body)?.value === 'test';
+    const test = ['test', 'tour'].includes($('#tf-kind', body)?.value);
     ['#tf-overs', '#tf-w', '#tf-t', '#tf-nr', '#tf-tie', '#tf-tb', '#tf-q'].forEach(s => { const el = $(s, body)?.closest('.field'); if (el) el.hidden = test; });
     $$('.tf-lo', body).forEach(el => { el.hidden = test; });
   };
@@ -938,6 +942,12 @@ function tournamentForm(t) {
     const x = e.target.closest('[data-x]');
     if (!x) return;
     if (x.dataset.x === 'cancel') { closeModal(); return; }
+    if (x.dataset.x === 'indnz') {
+      const nt = indNzTemplate();
+      update(nt); store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
+      toast('India tour of New Zealand 2026 created');
+      return;
+    }
     if (x.dataset.x === 'wtc') {
       const nt = wtcTemplate();
       update(nt); store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
@@ -946,6 +956,15 @@ function tournamentForm(t) {
     }
     const err = $('#tf-err', body);
     const name = $('#tf-name', body).value.trim();
+    if (!t && $('#tf-kind', body)?.value === 'tour') {
+      const tl = $('#tf-teams', body).value.split('\n').map(s => s.split('|')[0].trim().replace(/\s+/g, ' ')).filter(Boolean);
+      if (!name) { err.textContent = 'Give the tour a name.'; return; }
+      if (tl.length !== 2 || same(tl[0], tl[1])) { err.textContent = 'A tour has two teams: the home side on the first line, the visitors on the second.'; return; }
+      const nt = blankTour(name, tl[0], tl[1]);
+      update(nt); store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
+      toast('Tour created. Add its series next.');
+      return;
+    }
     if (!t && $('#tf-kind', body)?.value === 'test') {
       const tl = $('#tf-teams', body).value.split('\n').map(s => s.split('|')[0].trim().replace(/\s+/g, ' ')).filter(Boolean);
       if (!name) { err.textContent = 'Give the championship a name.'; return; }
@@ -1058,7 +1077,9 @@ async function scoreFixture(t, f) {
     saveMatch(true);
   }
   clearLive();
-  setupFromFixture({ ta: f.a, tb: f.b, overs: isTestTour(t) ? '' : t.overs, test: isTestTour(t), impact: !isTestTour(t) && !!t.impact, link: { tid: t.id, fid: f.id }, label: `${t.name}${f.stage ? ` ${STAGE[f.stage].toLowerCase()}` : ''}: ${f.a} v ${f.b}${f.venue || t.grounds?.[f.a] ? ` at ${f.venue || t.grounds[f.a]}` : ''}` });
+  const ts = isTour(t) ? tourMatchSetup(t, f) : { overs: isTestTour(t) ? '' : t.overs, test: isTestTour(t) };
+  const what = isTour(t) ? ` ${matchName(t, f)}` : f.stage ? ` ${STAGE[f.stage].toLowerCase()}` : '';
+  setupFromFixture({ ta: f.a, tb: f.b, overs: ts.overs, test: ts.test, impact: !ts.test && !isTour(t) && !!t.impact, link: { tid: t.id, fid: f.id }, label: `${t.name}${what}: ${f.a} v ${f.b}${f.venue || t.grounds?.[f.a] ? ` at ${f.venue || t.grounds[f.a]}` : ''}` });
   showTab('live', { scrollTop: true });
 }
 
@@ -1249,7 +1270,7 @@ function rrForm(t) {
 
 /* ---------- Wiring ---------- */
 $('#tr-new').addEventListener('click', () => tournamentForm(null));
-$('#tr-edit').addEventListener('click', () => { const t = active(); if (!t) return; if (isTestTour(t)) testTourForm(t, () => { update(t); RENDER.tournament(); }); else tournamentForm(t); });
+$('#tr-edit').addEventListener('click', () => { const t = active(); if (!t) return; if (isTestTour(t)) testTourForm(t, () => { update(t); RENDER.tournament(); }); else if (isTour(t)) tourForm(t, () => { update(t); RENDER.tournament(); }); else tournamentForm(t); });
 $('#tr-delete').addEventListener('click', async () => {
   const t = active();
   if (!t) return;
@@ -1275,6 +1296,7 @@ $('#tr-main').addEventListener('click', async e => {
   if (!t) return;
   const f = t.fixtures.find(x => x.id === b.dataset.f);
   if (isTestTour(t) && await testTourAction(t, a, f, b, { busy: x => busy(t, x), save: () => { update(t); RENDER.tournament(); } })) return;
+  if (isTour(t) && await tourAction(t, a, f, b, { busy: x => busy(t, x), save: () => { update(t); RENDER.tournament(); } })) return;
   switch (a) {
     case 'rr': rrForm(t); break;
     case 'import': importForm(t); break;
@@ -1370,14 +1392,46 @@ $('#tr-main').addEventListener('click', async e => {
   }
 });
 
-// A match scored from a fixture links itself to that fixture when it finishes.
+// A match scored from a fixture links itself to that fixture when it finishes. A match started some other
+// way is matched to the open tournament's next unplayed fixture between the same two teams, if there is one.
+function fitsMatch(t, f, m) {
+  if (!f.a || !f.b || !f.id || isPlayed(f) || same(f.a, f.b)) return false;
+  const teams = m.teams || [];
+  if (!teams.some(n => same(n, f.a)) || !teams.some(n => same(n, f.b))) return false;
+  const test = m.matchType === 'test';
+  if (isTestTour(t)) return test;
+  if (isTour(t)) { const l = legOf(t, f); return !!l && (test ? l.fmt === 'Test' : l.fmt !== 'Test' && (!m.overs || l.overs === m.overs)); }
+  return !test && (!t.overs || !m.overs || t.overs === m.overs);
+}
+function guessFixture(t, m) {
+  if (!t || t.fixtures.some(f => f.matchId === m.id)) return null; // already linked
+  let cands = t.fixtures.filter(f => fitsMatch(t, f, m));
+  if (isTestTour(t)) { const order = new Map((t.series || []).map((s, k) => [s.id, k])); cands = cands.filter(f => !f.stage || !t.fixtures.some(x => !x.stage && !isPlayed(x))).sort((x, y) => (order.get(x.series) ?? 99) - (order.get(y.series) ?? 99) || (x.no || 0) - (y.no || 0)); }
+  if (isTour(t)) { const order = new Map((t.legs || []).map((l, k) => [l.id, k])); cands.sort((x, y) => (order.get(x.leg) ?? 99) - (order.get(y.leg) ?? 99) || x.no - y.no); }
+  return cands[0] || null;
+}
+const fxName = (t, f) => (isTour(t) ? matchName(t, f) : f.stage ? 'the final' : f.no ? `${f.a} v ${f.b}, Test ${f.no}` : `${f.a} v ${f.b}`);
 matchHooks.done.push(m => {
-  if (!m.tournament) return;
   const ts = list();
-  const t = ts.find(x => x.id === m.tournament.tid);
-  const f = t && t.fixtures.find(x => x.id === m.tournament.fid);
-  if (!f) return;
-  f.matchId = m.id; f.manual = null; f.nr = false; f.simNR = false; t.updated = Date.now();
+  let t, f;
+  if (m.tournament) {
+    t = ts.find(x => x.id === m.tournament.tid);
+    f = t && t.fixtures.find(x => x.id === m.tournament.fid);
+  } else {
+    t = ts.find(x => x.id === activeId()) || ts[0];
+    f = guessFixture(t, m);
+  }
+  const done = [];
+  const link = (x, g) => { g.matchId = m.id; g.manual = null; g.nr = false; g.simNR = false; x.updated = Date.now(); done.push(`${x.name} (${fxName(x, g)})`); };
+  if (f) link(t, f);
+  // The same match can count in a tour and a Test championship: a Test between New Zealand and India on
+  // the tour is also a World Test Championship Test. It goes into the next unplayed one there.
+  ts.forEach(x => {
+    if (x === t || !(isTour(x) || (isTestTour(x) && m.matchType === 'test'))) return;
+    const g = guessFixture(x, m);
+    if (g) link(x, g);
+  });
+  if (!done.length) return;
   saveAll(ts);
-  toast(`Result added to ${t.name}`);
+  toast(m.tournament && done.length === 1 ? `Result added to ${t.name}` : `Result added to ${done.join(' and ')}. If one is the wrong match, use Clear result there.`);
 });
