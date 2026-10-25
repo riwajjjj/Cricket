@@ -144,6 +144,7 @@ function runEntry(e) {
     case 'impact': return coreImpact(e.team, e.out, e.inn);
     case 'so': return coreSO(e.s, e.ns, e.bw);
     case 'dayovers': return coreDayOvers(e.overs);
+    case 'adjust': return coreAdjust(e);
     default: return 'an unknown action';
   }
 }
@@ -377,6 +378,7 @@ function commentOver(i, over, bw) {
 function commentAction(e, before) {
   const i = cur();
   switch (e.t) {
+    case 'adjust': say('event', `Scorecard figures corrected (${e.inn < live.inns.length ? innName(live, e.inn) : 'an innings'})`); break;
     case 'bowler': {
       const b = i.bowlers[i.bowler];
       if (b && b.balls === 0 && !before.bowlers.includes(b.name.toLowerCase())) say('event', `${b.name} comes into the attack`);
@@ -812,6 +814,122 @@ export function renameAll(names) {
 }
 // Rename players or teams in a match kept in Saved. The change is added to the match's action log,
 // so editing a ball later replays it too.
+/* ---------- Typing figures in directly ----------
+   A correction is an entry in the action log holding the differences from the ball-by-ball figures, so
+   balls scored later still add on top, editing an earlier ball still works, and Undo reverses it.
+   A batter's runs and the extras change the innings total (and any target set from it); bowling figures
+   are only who gets the credit, so they don't. */
+const BAT_F = ['runs', 'balls', 'f4', 'f6'], BOWL_F = ['balls', 'maidens', 'runs', 'wkts', 'dots', 'wd', 'nb'], EX_F = ['b', 'lb', 'wd', 'nb'];
+function coreAdjust(e) {
+  const i = live.inns[e.inn];
+  if (!i) return 'that innings hadn\'t started';
+  let dRuns = 0, dW = 0;
+  for (const x of e.bat || []) {
+    const b = i.batters[x.k];
+    if (!b) return 'a batter in the correction wasn\'t in the innings';
+    BAT_F.forEach(f => { if (x[f]) b[f] = Math.max(0, b[f] + x[f]); });
+    dRuns += x.runs || 0;
+    if (x.how != null) {
+      const t = String(x.how).trim(), wasOut = !!b.out;
+      const retired = /^retired/i.test(t), out = !!t && !retired && !/^not out$/i.test(t);
+      b.out = out; b.retired = retired; b.how = out || retired ? t : 'not out';
+      delete b.dis; // the typed text is the dismissal now
+      dW += (out ? 1 : 0) - (wasOut ? 1 : 0);
+    }
+  }
+  for (const x of e.bowl || []) {
+    const b = i.bowlers[x.k];
+    if (!b) return 'a bowler in the correction hadn\'t bowled in the innings';
+    BOWL_F.forEach(f => { if (x[f]) b[f] = Math.max(0, b[f] + x[f]); });
+  }
+  EX_F.forEach(f => { const d = e.ex?.[f]; if (d) { i.extras[f] = Math.max(0, i.extras[f] + d); dRuns += d; } });
+  const auto = live.status === 'done' && (() => { try { return live.result === computeResult(); } catch { return false; } })();
+  i.runs += dRuns; i.wkts = Math.max(0, i.wkts + dW);
+  // Targets set from this innings move with it: up for the side chasing it, down if it was the chasing side's own runs.
+  live.inns.forEach((x, n) => { if (n > e.inn && x.target != null && !x.dls) x.target += x.bat === i.bat ? -dRuns : dRuns; });
+  if (auto) { try { live.result = computeResult(); } catch { /* keep the result as it was */ } }
+  return null;
+}
+function figuresModal(m, k0, apply) {
+  let k = Math.min(Math.max(0, k0), m.inns.length - 1);
+  const num = (id, v, w = 3) => `<input class="fig-in" id="${id}" type="text" inputmode="numeric" autocomplete="off" value="${esc(v)}" style="width:${w}em">`;
+  const form = () => {
+    const i = m.inns[k], cur = m === live && m.status === 'live' && k === m.inns.length - 1;
+    const bats = i.batters.map((b, n) => {
+      const crease = cur && (n === i.striker || n === i.non);
+      return `<tr><td>${esc(b.name)}</td><td><input class="fig-in" id="fg-h${n}" type="text" autocomplete="off" value="${esc(howOf(b))}" style="width:8.5em"${crease ? ' disabled title="At the crease"' : ''}></td>${BAT_F.map(f => `<td class="num">${num(`fg-${f}${n}`, b[f])}</td>`).join('')}</tr>`;
+    }).join('');
+    const bowls = i.bowlers.map((b, n) => (b.balls || b.runs ? `<tr><td>${esc(b.name)}</td>${BOWL_F.map(f => `<td class="num">${f === 'balls' ? `<input class="fig-in" id="fg-bw-balls${n}" type="text" inputmode="decimal" autocomplete="off" value="${esc(fmtOvers(b.balls))}" style="width:4em">` : num(`fg-bw-${f}${n}`, b[f])}</td>`).join('')}</tr>` : '')).join('');
+    return `${m.inns.length > 1 ? `<div class="field" style="margin-bottom:12px"><div class="lab"><label for="fg-inn">Innings</label></div><select id="fg-inn">${m.inns.map((x, n) => `<option value="${n}"${n === k ? ' selected' : ''}>${esc(m.teams[x.bat])} · ${esc(innName(m, n))} (${x.runs}/${x.wkts})</option>`).join('')}</select></div>` : ''}
+      <p class="modal-sub">Batting</p>
+      <div class="tbl-wrap" style="margin-top:0"><table class="tbl fig-tbl"><thead><tr><th>Batter</th><th>Dismissal</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th></tr></thead><tbody>${bats}</tbody></table></div>
+      <p class="modal-sub" style="margin-top:12px">Extras</p>
+      <div class="fields" style="grid-template-columns:repeat(4,minmax(0,1fr))">${EX_F.map(f => `<div class="field"><div class="lab"><label for="fg-ex-${f}">${{ b: 'Byes', lb: 'Leg byes', wd: 'Wides', nb: 'No-balls' }[f]}</label></div><input id="fg-ex-${f}" type="text" inputmode="numeric" autocomplete="off" value="${esc(i.extras[f])}"></div>`).join('')}</div>
+      ${bowls ? `<p class="modal-sub" style="margin-top:12px">Bowling</p>
+      <div class="tbl-wrap" style="margin-top:0"><table class="tbl fig-tbl"><thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Dots</th><th class="num">Wd</th><th class="num">Nb</th></tr></thead><tbody>${bowls}</tbody></table></div>` : ''}
+      <p class="hint">Type the figures as they should be. A batter's runs and the extras change the innings total${m.inns.some((x, n) => n > k && x.target != null) ? ' and the target set from it' : ''}; bowling figures don't. Dismissals are free text, like “c Smith b Jones” or “not out”. Balls scored later still add on top, and Undo reverses this.${cur ? ' The batters at the crease can\'t be marked out here.' : ''}</p>
+      <p class="err-text" id="fg-err"></p>
+      <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Save figures</button></div>`;
+  };
+  const body = openModal('Edit figures', form(), { wide: true });
+  body.addEventListener('change', e => { if (e.target.id === 'fg-inn') { k = Number(e.target.value); body.innerHTML = form(); } });
+  body.addEventListener('click', e => {
+    const x = e.target.closest('[data-x]');
+    if (!x) return;
+    if (x.dataset.x === 'cancel') { closeModal(); return; }
+    const i = m.inns[k], err = $('#fg-err', body);
+    const int = id => { const v = $('#' + id, body)?.value.trim(); return v === '' || v == null ? 0 : /^\d+$/.test(v) ? Number(v) : NaN; };
+    const entry = { t: 'adjust', inn: k, bat: [], bowl: [], ex: {} };
+    for (let n = 0; n < i.batters.length; n++) {
+      const b = i.batters[n], d = { k: n };
+      for (const f of BAT_F) { const v = int(`fg-${f}${n}`); if (Number.isNaN(v)) { err.textContent = `${b.name}: figures must be whole numbers.`; return; } if (v !== b[f]) d[f] = v - b[f]; }
+      const h = $(`#fg-h${n}`, body);
+      if (h && !h.disabled && h.value.trim() !== howOf(b)) d.how = h.value.trim() || 'not out';
+      if (Object.keys(d).length > 1) entry.bat.push(d);
+    }
+    for (const f of EX_F) { const v = int(`fg-ex-${f}`); if (Number.isNaN(v)) { err.textContent = 'Extras must be whole numbers.'; return; } if (v !== i.extras[f]) entry.ex[f] = v - i.extras[f]; }
+    for (let n = 0; n < i.bowlers.length; n++) {
+      const b = i.bowlers[n];
+      if (!$(`#fg-bw-runs${n}`, body)) continue;
+      const d = { k: n };
+      const o = parseOvers($(`#fg-bw-balls${n}`, body).value);
+      if (o.error || o.balls == null) { err.textContent = `${b.name}: write overs like 29.4.`; return; }
+      if (o.balls !== b.balls) d.balls = o.balls - b.balls;
+      for (const f of BOWL_F.slice(1)) { const v = int(`fg-bw-${f}${n}`); if (Number.isNaN(v)) { err.textContent = `${b.name}: figures must be whole numbers.`; return; } if (v !== b[f]) d[f] = v - b[f]; }
+      if (Object.keys(d).length > 1) entry.bowl.push(d);
+    }
+    if (!entry.bat.length && !entry.bowl.length && !Object.keys(entry.ex).length) { closeModal(); toast('Nothing changed'); return; }
+    const e2 = apply(entry);
+    if (e2) { err.textContent = `Can't save that: ${e2}.`; return; }
+    closeModal(); toast('Figures updated');
+  });
+}
+function editFigures(k) {
+  if (!canEdit()) { toast('This match was scored before editing existed, so its figures can\'t be changed.'); return; }
+  figuresModal(live, k, e => { const err = act(e, () => coreAdjust(e)); if (!err && live.status === 'done') saveMatch(true); return err; });
+}
+// The same for a match kept in Saved.
+export function editSavedFigures(id, done) {
+  const list = store.get('matches', []);
+  const k = Array.isArray(list) ? list.findIndex(x => x.id === id) : -1;
+  if (k < 0) return;
+  const m = list[k].data;
+  if (!m.init || !Array.isArray(m.log)) { toast('This match was scored before editing existed, so its figures can\'t be changed.'); return; }
+  figuresModal(m, 0, e => {
+    const real = live;
+    live = JSON.parse(JSON.stringify(m));
+    const err = coreAdjust(e);
+    if (err) { live = real; return err; }
+    live.log.push(e);
+    const data = live;
+    live = real;
+    list[k] = { ...list[k], data, result: data.result || list[k].result, summary: data.inns.map(i => `${data.teams[i.bat]} ${i.runs}/${i.wkts} (${i.so ? 'super over' : fmtOvers(i.balls)})`).join(' · ') };
+    store.set('matches', list);
+    if (live && live.id === id) { live = JSON.parse(JSON.stringify(data)); undoStack = []; saveLive(); renderLiveAll(); }
+    done && done();
+    return null;
+  });
+}
 export function renameSavedMatch(id, done) {
   const list = store.get('matches', []);
   const k = Array.isArray(list) ? list.findIndex(x => x.id === id) : -1;
@@ -1322,8 +1440,10 @@ export const roleTag = (m, team, name) => {
   return r.length ? ` (${r.join(', ')})` : '';
 };
 const FOLLOW_ON = { 5: 200, 4: 150, 3: 150, 2: 100, 1: 75 }; // Laws of Cricket 14.1
-let prefill = null; // set when a tournament fixture is scored
-export function setupFromFixture(p) { prefill = p; }
+// Set when a tournament fixture is scored. Kept in storage, so a reload (an app update, say) between
+// "Score live" and starting the match doesn't lose the link to the fixture.
+let prefill = (() => { const v = store.get('livePrefill', null); return v && typeof v === 'object' && v.link ? v : null; })();
+export function setupFromFixture(p) { prefill = p; if (p) store.set('livePrefill', p); else store.del('livePrefill'); }
 export function setupHTML() {
   const f = fmt();
   const saved = squadStore();
@@ -1334,7 +1454,7 @@ export function setupHTML() {
   const auto = (id, label, value) => liveField(id, label, value).replace('<input ', '<input data-auto="1" ');
   return `<div class="card">
     <h2 class="card-title">New match</h2>
-    ${prefill?.label ? `<p class="hint" style="margin:-4px 0 14px">${esc(prefill.label)}. If ${esc(tB)} bat first, press “Swap batting order”.</p>` : ''}
+    ${prefill?.label ? `<p class="hint" style="margin:-4px 0 14px">${esc(prefill.label)}. If ${esc(tB)} bat first, press “Swap batting order”. The result goes into the tournament when the match ends. <button type="button" class="tr-link" data-act="unlink-fx">Not a tournament match?</button></p>` : ''}
     <div class="setup-grid">
       ${liveField('ls-ta', 'Batting first', tA)}
       ${liveField('ls-tb', 'Bowling first', tB)}
@@ -1483,7 +1603,7 @@ export function startMatch() {
   if (impact) { live.impact = true; live.bench = bench.map(b => (b.length ? b : null)); }
   if (test) { live.matchType = 'test'; live.days = Number(g('ls-days')) || 5; live.followOn = FOLLOW_ON[live.days] || 200; live.clock = { day: 1, s: 0, start: [], dayStart: [] }; live.sessions = []; }
   if (prefill?.link) live.tournament = prefill.link;
-  prefill = null;
+  prefill = null; store.del('livePrefill');
   bbbOpen.clear();
   live.init = JSON.stringify(live); // the starting point the action log replays from
   live.log = [];
@@ -1928,7 +2048,7 @@ export function scorecardHTML(m, idx) {
   }).join('');
   const bowls = i.bowlers.filter(b => b.balls || b.runs).map(b => `<tr><td>${esc(b.name + roleTag(m, 1 - i.bat, b.name))}</td><td class="num">${fmtOvers(b.balls)}</td><td class="num">${b.maidens}</td><td class="num">${b.runs}</td><td class="num"><b>${b.wkts}</b></td><td class="num">${b.balls ? nf(b.runs / (b.balls / 6)) : '—'}</td><td class="num">${b.dots}</td><td class="num">${b.wd}/${b.nb}</td></tr>`).join('');
   return `<div class="card scorecard">
-    <div class="sc-head"><h3>${esc(team)} · ${esc(innName(m, idx))}</h3><span class="sc-total">${i.runs}/${i.wkts} <span class="dim" style="font-size:.8em">(${fmtOvers(i.balls)} ov, RR ${rr})</span></span></div>
+    <div class="sc-head"><h3>${esc(team)} · ${esc(innName(m, idx))}</h3>${m === live && canEdit() ? `<button type="button" class="btn ghost sm" data-act="figs" data-k="${idx}">Edit figures</button>` : ''}<span class="sc-total">${i.runs}/${i.wkts} <span class="dim" style="font-size:.8em">(${fmtOvers(i.balls)} ov, RR ${rr})</span></span></div>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Batter</th><th>Dismissal</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th></tr></thead><tbody>${bats}</tbody></table></div>
     <p class="sc-meta">Extras ${exT} (b ${ex.b}, lb ${ex.lb}, w ${ex.wd}, nb ${ex.nb}${ex.pen ? `, pen ${ex.pen}` : ''})${i.target != null ? ` · Target ${i.target}${i.dls ? ' (DLS)' : ''}` : ''}${i.maxBalls != null && m.overs && i.maxBalls !== m.overs * 6 ? ` · Reduced to ${fmtOvers(i.maxBalls)} overs` : ''}${i.ended ? ` · ${esc(endedText(i.ended, m))}` : ''}</p>
     ${m.subs?.[i.bat] || m.subs?.[1 - i.bat] ? `<p class="sc-meta">${[i.bat, 1 - i.bat].filter(t => m.subs?.[t]).map(t => `Impact player (${esc(m.teams[t])}): ${esc(m.subs[t].in)} for ${esc(m.subs[t].out)}`).join(' · ')}</p>` : ''}
@@ -2555,8 +2675,10 @@ export async function liveAction(action, el) {
     case 'rename': renameModal(); break;
     case 'undo': undo(); break;
     case 'goback': goBackModal(); break;
+    case 'figs': editFigures(Number(el.dataset.k)); break;
     case 'swap': act({ t: 'swap' }, coreSwap); break;
     case 'swap-teams': swapSetupTeams(); break;
+    case 'unlink-fx': setupFromFixture(null); renderLiveAll(); toast('This match won\'t go into a tournament'); break;
     case 'edit-ball': openEditBall(Number(el.dataset.li)); break;
     case 'set-bowler': setBowler($('#live-bowler')?.value); break;
     case 'start-2nd': startSecond(); break;

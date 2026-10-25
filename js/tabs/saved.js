@@ -8,7 +8,7 @@ import { $, esc, fx, nf, store, uid } from '../utils.js';
 import { batStats } from './batting.js';
 import { bowlStats } from './bowling.js';
 import { loadIntoCompare } from './compare.js';
-import { live, openScorecard, renameSavedMatch, resumeMatch, scorecardCSV } from './live.js';
+import { editSavedFigures, live, openScorecard, renameSavedMatch, resumeMatch, scorecardCSV } from './live.js';
 /* =====================================================================
    15. SAVED players & matches
    ===================================================================== */
@@ -70,6 +70,7 @@ RENDER.saved = function renderSaved() {
         <button type="button" class="btn sm" data-sm="view" data-id="${esc(m.id)}">Scorecard</button>
         <button type="button" class="btn ghost sm" data-sm="resume" data-id="${esc(m.id)}">Open in scorer</button>
         <button type="button" class="btn ghost sm" data-sm="rename" data-id="${esc(m.id)}">Edit names</button>
+        <button type="button" class="btn ghost sm" data-sm="figs" data-id="${esc(m.id)}">Edit figures</button>
         <button type="button" class="btn ghost sm" data-sm="csv" data-id="${esc(m.id)}">CSV</button>
         <button type="button" class="btn ghost sm danger" data-sm="del" data-id="${esc(m.id)}">Delete</button>
       </div></div>`).join('') : `<div class="empty-state">No saved matches yet. Score one in the Live scorer and press “Save match”.</div>`;
@@ -100,6 +101,7 @@ $('#tab-saved').addEventListener('click', async e => {
     if (!m) return;
     if (sm.dataset.sm === 'view') openScorecard({ ...m.data, result: m.data.result || m.result }, m.title);
     else if (sm.dataset.sm === 'rename') renameSavedMatch(m.id, () => RENDER.saved());
+    else if (sm.dataset.sm === 'figs') editSavedFigures(m.id, () => RENDER.saved());
     else if (sm.dataset.sm === 'csv') showCSV(`${m.title.replace(/\s+/g, '-')}-scorecard.csv`, scorecardCSV(m.data));
     else if (sm.dataset.sm === 'resume') {
       if (live && live.id !== m.id && !(await confirmBox('Replace the current match?', 'The match in the live scorer will be replaced. Save it first if you want to keep it.', 'Replace', true))) return;
