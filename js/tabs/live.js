@@ -62,6 +62,8 @@ export function saveLive() {
 window.addEventListener('pagehide', () => { if (undoSaveTimer) saveUndo(); });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && undoSaveTimer) saveUndo(); });
 
+// Economy cut to two decimals, not rounded, as scorecards show it (86 off 29.4 overs is 2.89, not 2.90).
+const econOf = b => Math.floor(b.runs * 600 / b.balls) / 100;
 export const howOf = b => (b.out || b.retired) ? b.how : 'not out';
 const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Who can still come in: unused players, or a retired batter returning.
@@ -1788,7 +1790,7 @@ export function liveHTML(animateLast) {
       <div class="card">
         <h2 class="card-title">Bowling</h2>
         <div class="tbl-wrap" style="margin-top:0"><table class="tbl"><thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th></tr></thead>
-        <tbody>${(i.needBowler && prevBowler ? [prevBowler] : [bw]).map(b => `<tr><td>${esc(b.name + roleTag(live, 1 - i.bat, b.name))}</td><td class="num">${fmtOvers(b.balls)}</td><td class="num">${b.maidens}</td><td class="num">${b.runs}</td><td class="num"><b>${b.wkts}</b></td><td class="num">${b.balls ? nf(b.runs / (b.balls / 6)) : '—'}</td></tr>`).join('')}</tbody></table></div>
+        <tbody>${(i.needBowler && prevBowler ? [prevBowler] : [bw]).map(b => `<tr><td>${esc(b.name + roleTag(live, 1 - i.bat, b.name))}</td><td class="num">${fmtOvers(b.balls)}</td><td class="num">${b.maidens}</td><td class="num">${b.runs}</td><td class="num"><b>${b.wkts}</b></td><td class="num">${b.balls ? nf(econOf(b)) : '—'}</td></tr>`).join('')}</tbody></table></div>
         ${quotaHTML(i)}
       </div>
       ${commentaryCardHTML()}
@@ -2046,7 +2048,7 @@ export function scorecardHTML(m, idx) {
     const how = howOf(b);
     return `<tr><td>${esc(b.name + roleTag(m, i.bat, b.name))}${atCrease && k === i.striker ? ' *' : ''}</td><td class="dismissal">${esc(how)}</td><td class="num"><b>${b.runs}</b></td><td class="num">${b.balls}</td><td class="num">${b.f4}</td><td class="num">${b.f6}</td><td class="num">${b.balls ? nf(b.runs / b.balls * 100, 1) : '—'}</td></tr>`;
   }).join('');
-  const bowls = i.bowlers.filter(b => b.balls || b.runs).map(b => `<tr><td>${esc(b.name + roleTag(m, 1 - i.bat, b.name))}</td><td class="num">${fmtOvers(b.balls)}</td><td class="num">${b.maidens}</td><td class="num">${b.runs}</td><td class="num"><b>${b.wkts}</b></td><td class="num">${b.balls ? nf(b.runs / (b.balls / 6)) : '—'}</td><td class="num">${b.dots}</td><td class="num">${b.wd}/${b.nb}</td></tr>`).join('');
+  const bowls = i.bowlers.filter(b => b.balls || b.runs).map(b => `<tr><td>${esc(b.name + roleTag(m, 1 - i.bat, b.name))}</td><td class="num">${fmtOvers(b.balls)}</td><td class="num">${b.maidens}</td><td class="num">${b.runs}</td><td class="num"><b>${b.wkts}</b></td><td class="num">${b.balls ? nf(econOf(b)) : '—'}</td><td class="num">${b.dots}</td><td class="num">${b.wd}/${b.nb}</td></tr>`).join('');
   return `<div class="card scorecard">
     <div class="sc-head"><h3>${esc(team)} · ${esc(innName(m, idx))}</h3>${m === live && canEdit() ? `<button type="button" class="btn ghost sm" data-act="figs" data-k="${idx}">Edit figures</button>` : ''}<span class="sc-total">${i.runs}/${i.wkts} <span class="dim" style="font-size:.8em">(${fmtOvers(i.balls)} ov, RR ${rr})</span></span></div>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Batter</th><th>Dismissal</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th></tr></thead><tbody>${bats}</tbody></table></div>
@@ -2799,7 +2801,7 @@ export function scorecardCSV(m) {
     i.batters.forEach(b => rows.push([b.name + roleTag(m, i.bat, b.name), howOf(b), b.runs, b.balls, b.f4, b.f6, b.balls ? fx(b.runs / b.balls * 100) : '']));
     rows.push(['Extras', `b ${i.extras.b}, lb ${i.extras.lb}, w ${i.extras.wd}, nb ${i.extras.nb}${i.extras.pen ? `, pen ${i.extras.pen}` : ''}`]);
     rows.push(['Bowler', 'Overs', 'Maidens', 'Runs', 'Wickets', 'Econ', 'Dots']);
-    i.bowlers.filter(b => b.balls || b.runs).forEach(b => rows.push([b.name + roleTag(m, 1 - i.bat, b.name), fmtOvers(b.balls), b.maidens, b.runs, b.wkts, b.balls ? fx(b.runs / (b.balls / 6)) : '', b.dots]));
+    i.bowlers.filter(b => b.balls || b.runs).forEach(b => rows.push([b.name + roleTag(m, 1 - i.bat, b.name), fmtOvers(b.balls), b.maidens, b.runs, b.wkts, b.balls ? fx(econOf(b)) : '', b.dots]));
     rows.push([]);
   });
   if (m.result) rows.push(['Result', m.result]);
@@ -2980,7 +2982,7 @@ export async function scorecardImage(m) {
           x.fillStyle = '#c3d1c9';
           [fmtOvers(b.balls), b.maidens, b.runs].forEach((v, j) => num(x, v, bc[j][1]));
           x.fillStyle = '#ffffff'; num(x, b.wkts, 1000);
-          x.fillStyle = '#c3d1c9'; num(x, b.balls ? nf(b.runs / (b.balls / 6)) : '—', W - P);
+          x.fillStyle = '#c3d1c9'; num(x, b.balls ? nf(econOf(b)) : '—', W - P);
         });
       }
       y += 50;
