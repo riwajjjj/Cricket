@@ -1,5 +1,5 @@
 import { alpha, axes, baseOpts, chart, pal } from '../charts.js';
-import { copyText, fitText, roundRect, shareImage, showCSV, showImageModal, toCSV } from '../export.js';
+import { copyText, download, fitText, roundRect, shareImage, showCSV, showImageModal, toCSV } from '../export.js';
 import { tipBtn } from '../groups.js';
 import { DLS, fmtOvers, parseOvers, profileFor, winProb } from '../maths.js';
 import { RENDER, nav } from '../router.js';
@@ -54,13 +54,28 @@ export const innName = (m, k) => { const i = m.inns[k]; return isTest(m) ? `${OR
 // megabytes in a long Test) is written once scoring pauses, and when the page is closed.
 let undoSaveTimer = 0;
 const saveUndo = () => { clearTimeout(undoSaveTimer); undoSaveTimer = 0; store.set('liveUndo', undoStack.slice(-40)); };
+// Recent copies of the match in progress (the last three matches, one copy each), refreshed a few seconds after
+// scoring pauses. If the live match is lost or replaced, "Open a match file" on the new-match screen lists them.
+let snapTimer = 0;
+function keepSnapshot() {
+  clearTimeout(snapTimer); snapTimer = 0;
+  if (!live || !live.id || !Array.isArray(live.inns)) return;
+  const all = store.get('liveSnaps', []);
+  const list = (Array.isArray(all) ? all : []).filter(x => x && x.id !== live.id);
+  if (live.status !== 'done') { // a finished match is in Saved matches
+    const i = live.inns[live.inns.length - 1];
+    list.unshift({ id: live.id, savedAt: Date.now(), title: `${live.teams[0]} v ${live.teams[1]}`, line: `${live.teams[i.bat]} ${i.runs}/${i.wkts} (${fmtOvers(i.balls)} ov)`, live });
+  }
+  store.set('liveSnaps', list.slice(0, 3));
+}
 export function saveLive() {
   store.set('live', live);
+  if (!snapTimer) snapTimer = setTimeout(keepSnapshot, 8000);
   clearTimeout(undoSaveTimer);
   undoSaveTimer = setTimeout(saveUndo, 1500);
 }
-window.addEventListener('pagehide', () => { if (undoSaveTimer) saveUndo(); });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && undoSaveTimer) saveUndo(); });
+window.addEventListener('pagehide', () => { if (undoSaveTimer) saveUndo(); if (snapTimer) keepSnapshot(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { if (undoSaveTimer) saveUndo(); if (snapTimer) keepSnapshot(); } });
 
 // Economy cut to two decimals, not rounded, as scorecards show it (86 off 29.4 overs is 2.89, not 2.90).
 const econOf = b => Math.floor(b.runs * 600 / b.balls) / 100;
@@ -1486,7 +1501,7 @@ export function setupHTML() {
     <datalist id="ls-sqa-list"></datalist><datalist id="ls-sqb-list"></datalist>
     <p class="hint">Leave overs empty for an unlimited innings (it ends when the side is all out or you end it). Bowlers are limited to a fifth of the overs. In a Test, if the first day is washed out, pick the days remaining: the follow-on follows them (Law 14.3).</p>
     <p class="err-text" id="ls-err"></p>
-    <div class="modal-actions" style="justify-content:flex-start"><button type="button" class="btn" data-act="start">Start match</button></div>
+    <div class="modal-actions" style="justify-content:flex-start"><button type="button" class="btn" data-act="start">Start match</button><button type="button" class="btn ghost" data-act="open-file">Open a match file</button></div>
   </div>`;
 }
 function swapSetupTeams() {
@@ -1771,6 +1786,7 @@ export function liveHTML(animateLast) {
             ${live.overs && !isTest() && !i.so ? '<button type="button" class="btn ghost sm" data-act="rain">Rain / stoppage</button>' : ''}
             <button type="button" class="btn ghost sm" data-act="rename">Edit names</button>
             ${canEdit() ? '<button type="button" class="btn ghost sm" data-act="goback">Go back to an over</button>' : ''}
+            <button type="button" class="btn ghost sm" data-act="save-file">Save match file</button>
             <button type="button" class="btn ghost sm danger" data-act="end-inn">${isTest() ? 'Declare' : 'End innings'}</button>
             ${isTest() ? '<button type="button" class="btn ghost sm" data-act="draw">End as a draw</button>' : '<button type="button" class="btn ghost sm" data-act="abandon">No result</button>'}
             </div>
@@ -1931,6 +1947,7 @@ export function breakHTML() {
       ${impactAvail() ? '<button type="button" class="btn ghost" data-act="impact">Impact player</button>' : ''}
       <button type="button" class="btn ghost" data-act="undo"${canUndo() ? '' : ' disabled'}>Undo last ball</button>
       ${canEdit() ? '<button type="button" class="btn ghost" data-act="goback">Go back to an over</button>' : ''}
+      <button type="button" class="btn ghost" data-act="save-file">Save match file</button>
     </div>
   </div>
   ${test ? `<div class="grid-2">${testCardHTML()}${testOddsHTML()}</div>` : ''}`;
@@ -1997,7 +2014,7 @@ function coreStart2(s, ns, bw, bat, lost = 0) {
 export function doneHTML() {
   return `${boardHTML()}<div class="card result-banner"><h2 class="card-title">Result</h2><p style="margin:0;font:700 1.4rem/1.25 var(--f-display);letter-spacing:.02em">${esc(live.result)}</p>
     <p class="hint">${live.inns.map(i => `${esc(live.teams[i.bat])} ${i.runs}/${i.wkts} (${i.so ? soName(i.so) : `${fmtOvers(i.balls)} ov`})`).join(' · ')}</p>
-    <div class="modal-actions" style="justify-content:flex-start"><button type="button" class="btn" data-act="save-match">Save match</button><button type="button" class="btn ghost" data-act="image">Share as image</button><button type="button" class="btn ghost" data-act="sc-image">Scorecard image</button><button type="button" class="btn ghost" data-act="print">Print or save as PDF</button><button type="button" class="btn ghost" data-act="csv">Scorecard CSV</button><button type="button" class="btn ghost" data-act="undo"${canUndo() ? '' : ' disabled'}>Undo last ball</button>${canEdit() ? '<button type="button" class="btn ghost" data-act="goback">Go back to an over</button>' : ''}</div></div>${soDue() ? soFormHTML() : ''}`;
+    <div class="modal-actions" style="justify-content:flex-start"><button type="button" class="btn" data-act="save-match">Save match</button><button type="button" class="btn ghost" data-act="image">Share as image</button><button type="button" class="btn ghost" data-act="sc-image">Scorecard image</button><button type="button" class="btn ghost" data-act="print">Print or save as PDF</button><button type="button" class="btn ghost" data-act="csv">Scorecard CSV</button><button type="button" class="btn ghost" data-act="save-file">Save match file</button><button type="button" class="btn ghost" data-act="undo"${canUndo() ? '' : ' disabled'}>Undo last ball</button>${canEdit() ? '<button type="button" class="btn ghost" data-act="goback">Go back to an over</button>' : ''}</div></div>${soDue() ? soFormHTML() : ''}`;
 }
 
 // A ball in an over. In the live match it's a button that opens the edit dialog.
@@ -2677,6 +2694,8 @@ export async function liveAction(action, el) {
     case 'rename': renameModal(); break;
     case 'undo': undo(); break;
     case 'goback': goBackModal(); break;
+    case 'save-file': saveFileModal(); break;
+    case 'open-file': openFileModal(); break;
     case 'figs': editFigures(Number(el.dataset.k)); break;
     case 'swap': act({ t: 'swap' }, coreSwap); break;
     case 'swap-teams': swapSetupTeams(); break;
@@ -2809,8 +2828,67 @@ export function scorecardCSV(m) {
 }
 
 
-export function clearLive() { live = null; undoStack = []; store.del('live'); store.del('liveUndo'); }
+export function clearLive() { if (live && live.status !== 'done') keepSnapshot(); live = null; undoStack = []; store.del('live'); store.del('liveUndo'); }
 export function resumeMatch(data) { live = JSON.parse(JSON.stringify(data)); undoStack = []; saveLive(); }
+
+/* ---------- Match files ----------
+   The match in the scorer (with its action log, so undo and "Go back to an over" still work) as one file. */
+function saveFileModal() {
+  if (!live) return;
+  const json = JSON.stringify({ app: 'crease', kind: 'live', version: 1, savedAt: new Date().toISOString(), live });
+  const slug = live.teams.join('-v-').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'match';
+  const name = `crease-live-${slug}-${new Date().toISOString().slice(0, 10)}.json`;
+  const i = cur();
+  const body = openModal('Save match file', `
+    <p style="margin:0 0 12px;color:var(--fg-2)">${esc(live.teams[0])} v ${esc(live.teams[1])}: ${esc(live.teams[i.bat])} ${i.runs}/${i.wkts} (${fmtOvers(i.balls)} overs). Keep this file somewhere safe. If the live match is ever lost, “Open a match file” on the new-match screen carries on from this point.</p>
+    <textarea class="csv-box" readonly aria-label="Match file text">${esc(json)}</textarea>
+    <p class="hint">If the download button does nothing in this view, copy the text and save it as a .json file.</p>
+    <div class="modal-actions"><button type="button" class="btn ghost" data-x="copy">Copy text</button><button type="button" class="btn" data-x="dl">Download file</button></div>`, { wide: true });
+  body.addEventListener('click', async e => {
+    const x = e.target.closest('[data-x]');
+    if (!x) return;
+    if (x.dataset.x === 'dl') { download(name, new Blob([json], { type: 'application/json' })); toast('Match file downloaded'); }
+    else { try { await navigator.clipboard.writeText(json); toast('Match file copied'); } catch { const t = $('textarea', body); t.focus(); t.select(); toast('Select the text and copy it'); } }
+  });
+}
+function readMatchFile(text) {
+  let o;
+  try { o = JSON.parse(text); } catch { return { error: 'That isn\'t a match file: the text isn\'t valid JSON.' }; }
+  const m = o && o.kind === 'live' ? o.live : o && o.app === 'crease' && o.data && o.data.live ? o.data.live : o && Array.isArray(o.inns) ? o : null;
+  if (!m || !Array.isArray(m.inns) || !m.inns.length || !Array.isArray(m.teams) || m.teams.length < 2) return { error: 'That file doesn\'t hold a match from the live scorer.' };
+  return { match: m };
+}
+function openFileModal() {
+  let found = null;
+  const snaps = (() => { const v = store.get('liveSnaps', []); return Array.isArray(v) ? v.filter(x => x && x.live && Array.isArray(x.live.inns)) : []; })();
+  const sumOf = m => { const i = m.inns[m.inns.length - 1]; return `${m.teams[0]} v ${m.teams[1]}: ${m.teams[i.bat]} ${i.runs}/${i.wkts} (${fmtOvers(i.balls)} ov)${m.status === 'done' ? `, ${m.result || 'finished'}` : ''}`; };
+  const body = openModal('Open a match file', `
+    ${snaps.length ? `<div class="modal-block"><p class="modal-sub">Recent matches kept in this browser</p>
+      ${snaps.map((x, k) => `<div class="fx-row" style="display:flex;gap:10px;align-items:center;justify-content:space-between;padding:6px 0"><span>${esc(x.title)} <span class="dim">· ${esc(x.line)} · ${esc(new Date(x.savedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }))}</span></span><button type="button" class="btn ghost sm" data-snap="${k}">Open</button></div>`).join('')}
+    </div>` : ''}
+    <div class="modal-block"><p class="modal-sub">Choose a match file</p><input type="file" id="mf-file" accept=".json,application/json" class="file-input"></div>
+    <div class="modal-block"><p class="modal-sub">Or paste the match text</p><textarea id="mf-text" class="csv-box" style="min-height:90px" placeholder='{"app":"crease","kind":"live", …}' aria-label="Match file text"></textarea></div>
+    <p class="answer" id="mf-sum" style="display:block" hidden></p>
+    <p class="err-text" id="mf-err"></p>
+    ${live && live.status !== 'done' ? '<p class="hint">The match in the scorer now is saved to Saved matches first, so nothing is lost.</p>' : ''}
+    <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok" disabled>Open match</button></div>`, { wide: true });
+  const ok = $('[data-x="ok"]', body), sum = $('#mf-sum', body), err = $('#mf-err', body);
+  const take = m => { found = m; sum.hidden = false; sum.textContent = sumOf(m); ok.disabled = false; err.textContent = ''; };
+  const parse = text => { const r = readMatchFile(text); if (r.error) { found = null; sum.hidden = true; ok.disabled = true; err.textContent = r.error; } else take(r.match); };
+  const open = m => {
+    if (live && live.status !== 'done' && live.id !== m.id) saveMatch(true);
+    resumeMatch(m); bbbOpen.clear(); closeModal(); renderLiveAll(); toast('Match opened');
+  };
+  $('#mf-file', body).addEventListener('change', async e => { const f = e.target.files && e.target.files[0]; if (f) { try { const t = await f.text(); $('#mf-text', body).value = ''; parse(t); } catch { err.textContent = 'Couldn\'t read that file.'; } } });
+  $('#mf-text', body).addEventListener('input', e => { if (e.target.value.trim()) parse(e.target.value); });
+  body.addEventListener('click', e => {
+    const s = e.target.closest('[data-snap]');
+    if (s) { const x = snaps[Number(s.dataset.snap)]; if (x) open(x.live); return; }
+    const x = e.target.closest('[data-x]');
+    if (!x) return;
+    if (x.dataset.x === 'ok' && found) open(found); else if (x.dataset.x === 'cancel') closeModal();
+  });
+}
 
 /* ---------- Rain dialog ---------- */
 const poss = n => (/s$/i.test(n) ? `${n}'` : `${n}'s`);
