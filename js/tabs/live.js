@@ -238,11 +238,16 @@ function coreBall(ev) {
       legal = false; total = bowlerRuns = 1 + r; i.extras.wd += total; bw.wd++; ran = r;
       label = r ? `${total}wd` : 'wd'; cls = 'dx';
       break;
-    case 'nb':
-      legal = false; total = bowlerRuns = 1 + r; i.extras.nb += 1; bw.nb++;
-      st.runs += r; st.balls++; if (r === 0) dot(); if (r === 4) st.f4++; if (r === 6) st.f6++; ran = r;
-      label = r ? `nb+${r}` : 'nb'; cls = 'dx';
+    case 'nb': {
+      // Runs off a no-ball are the batter's, unless they are byes or leg byes: then only the no-ball is the bowler's.
+      const by = ev.bye === 'b' || ev.bye === 'lb' ? ev.bye : null;
+      legal = false; total = 1 + r; bowlerRuns = by ? 1 : 1 + r; i.extras.nb += 1; bw.nb++;
+      st.balls++; ran = r;
+      if (by) { i.extras[by] += r; dot(); label = r ? `nb+${r}${by}` : 'nb'; }
+      else { st.runs += r; if (r === 0) dot(); if (r === 4) st.f4++; if (r === 6) st.f6++; label = r ? `nb+${r}` : 'nb'; }
+      cls = 'dx';
       break;
+    }
     case 'b': case 'lb':
       total = r; i.extras[ev.type] += r; st.balls++; dot(); ran = ev.ran ?? r;
       label = `${r}${ev.type}`; cls = 'dx';
@@ -282,13 +287,13 @@ function coreBall(ev) {
   // Batter-vs-bowler match-ups (keyed by position in this innings, so renames don't break them)
   const wideBall = ev.type === 'wd' || (ev.type === 'wkt' && ev.ball === 'wd');
   const ro = ev.type === 'wkt' && ev.how === 'run out';
-  const batRuns = ev.type === 'run' || ev.type === 'nb' ? r : (ev.type === 'wkt' && ro && ev.ball !== 'wd' ? r : 0);
+  const batRuns = ev.type === 'run' || (ev.type === 'nb' && !ev.bye) ? r : (ev.type === 'wkt' && ro && ev.ball !== 'wd' ? r : 0);
   i.mu = i.mu || {};
   const mk = `${i.bowler}|${strikerBefore}`;
   const mu = i.mu[mk] || (i.mu[mk] = { balls: 0, runs: 0, dots: 0, f4: 0, f6: 0, outs: 0 });
   if (!wideBall) {
     mu.balls++; mu.runs += batRuns; if (batRuns === 0) mu.dots++;
-    if (!ev.ot && (ev.type === 'run' || ev.type === 'nb')) { if (r === 4) mu.f4++; if (r === 6) mu.f6++; }
+    if (!ev.ot && (ev.type === 'run' || (ev.type === 'nb' && !ev.bye))) { if (r === 4) mu.f4++; if (r === 6) mu.f6++; }
   }
   if (ev.type === 'wkt' && !ro) mu.outs++;
   // Where the shot went (wagon wheel), when the scorer tapped it
@@ -367,8 +372,8 @@ function commentBall({ i, ev, bw, st, cm, total, r, batRuns, stand, strikerBefor
       break;
     case 'wd': kind = 'extra'; text = total === 1 ? 'wide' : `wide, ${total} runs in all`; break;
     case 'nb':
-      kind = r === 4 ? 'four' : r === 6 ? 'six' : 'extra';
-      text = r ? `no-ball, and ${big(r)} off the bat${where}` : 'no-ball';
+      kind = !ev.bye && r === 4 ? 'four' : !ev.bye && r === 6 ? 'six' : 'extra';
+      text = r ? (ev.bye ? `no-ball, and ${plural(r, ev.bye === 'lb' ? 'leg bye' : 'bye')}` : `no-ball, and ${big(r)} off the bat${where}`) : 'no-ball';
       if (!isTest()) text += '. Free hit next';
       break;
     case 'b': kind = 'extra'; text = plural(r, 'bye'); break;
@@ -2448,6 +2453,30 @@ $('#tab-live').addEventListener('toggle', e => {
   foldState.set(d.dataset.fold, d.open);
 }, true);
 
+// A no-ball: the runs can come off the bat, or be byes or leg byes (the batter missed it). The one-run penalty is added either way.
+function noBallModal() {
+  let from = 'bat';
+  const opts = () => (from === 'bat' ? [0, 1, 2, 3, 4, 6] : [1, 2, 3, 4]);
+  const body = openModal('No-ball', `
+    <div class="modal-block"><p class="modal-sub">The runs came</p><div class="seg" id="nbm-from"><button type="button" data-from="bat" aria-pressed="true">Off the bat</button><button type="button" data-from="b" aria-pressed="false">As byes</button><button type="button" data-from="lb" aria-pressed="false">As leg byes</button></div></div>
+    <p class="modal-sub" id="nbm-note">Runs off the bat (the one-run penalty is added for you)</p><div class="opt-grid" id="nbm-runs"></div>
+    <p class="hint" style="margin-bottom:0">Byes and leg byes off a no-ball go to extras, not the batter or the bowler; the bowler is charged only the no-ball. The batter is credited with a ball faced either way.</p>`);
+  const draw = () => {
+    $('#nbm-runs', body).innerHTML = opts().map(v => `<button type="button" data-v="${v}">${v}</button>`).join('');
+    $('#nbm-note', body).textContent = from === 'bat' ? 'Runs off the bat (the one-run penalty is added for you)' : `${from === 'lb' ? 'Leg byes' : 'Byes'} run (the one-run penalty is added for you)`;
+    $$('[data-from]', body).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.from === from)));
+  };
+  draw();
+  body.addEventListener('click', e => {
+    const f = e.target.closest('[data-from]');
+    if (f) { from = f.dataset.from; draw(); return; }
+    const b = e.target.closest('[data-v]');
+    if (!b) return;
+    const r = Number(b.dataset.v);
+    closeModal();
+    if (from === 'bat') withShot({ type: 'nb', runs: r }); else applyBall({ type: 'nb', runs: r, bye: from });
+  });
+}
 export function pickRuns(title, note, options, onPick) {
   const body = openModal(title, `<p class="modal-sub">${esc(note)}</p><div class="opt-grid">${options.map(o => `<button type="button" data-v="${o.v}">${esc(o.l)}</button>`).join('')}</div>`);
   body.addEventListener('click', e => {
@@ -2753,7 +2782,7 @@ export async function liveAction(action, el) {
     case 'run': withShot({ type: 'run', runs: Number(el.dataset.r) }); break;
     case 'wkt': wicketModal(); break;
     case 'wd': pickRuns('Wide', 'Total runs from this wide, including the one-run penalty', [1, 2, 3, 4, 5].map(t => ({ l: String(t), v: t - 1 })), r => applyBall({ type: 'wd', runs: r })); break;
-    case 'nb': pickRuns('No-ball', 'Runs off the bat (the one-run penalty is added for you)', [0, 1, 2, 3, 4, 6].map(r => ({ l: String(r), v: r })), r => withShot({ type: 'nb', runs: r })); break;
+    case 'nb': noBallModal(); break;
     case 'b': pickRuns('Byes', 'Byes run', [1, 2, 3, 4].map(r => ({ l: String(r), v: r })), r => applyBall({ type: 'b', runs: r })); break;
     case 'lb': pickRuns('Leg byes', 'Leg byes run', [1, 2, 3, 4].map(r => ({ l: String(r), v: r })), r => applyBall({ type: 'lb', runs: r })); break;
     case 'more': moreRunsModal(); break;
