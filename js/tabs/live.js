@@ -1440,7 +1440,7 @@ function relieveModal() {
     <p style="margin:0 0 12px;color:var(--fg-2)">${esc(cb.name)} is bowling. ${esc(bowled)}. The new bowler bowls the rest of the over from the same end, and can't bowl the next over. Each bowler keeps the balls, runs and wickets from their own deliveries.</p>
     <datalist id="rl-list">${i.bowlers.filter((b, k) => k !== i.bowler && k !== i.lastBowler && !(i.barred || []).includes(k)).map(b => `<option value="${esc(b.name)}"></option>`).join('')}</datalist>
     ${bowlerPicker(i, 'rl-bowler', true)}
-    <label class="check" style="margin-top:10px"><input type="checkbox" id="rl-bar" checked> ${esc(cb.name)} can't bowl again this innings (injured)</label>
+    <label class="check" style="margin-top:10px"><input type="checkbox" id="rl-bar"> ${esc(cb.name)} can't bowl again this innings (tick this if injured)</label>
     <p class="err-text" id="rl-err"></p>
     <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Change bowler</button></div>`);
   body.addEventListener('click', e => {
