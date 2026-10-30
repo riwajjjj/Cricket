@@ -1814,7 +1814,7 @@ export function liveHTML(animateLast) {
   const over = i.overs[i.overs.length - 1];
   const bw = i.bowlers[i.bowler];
   const lockPad = i.needBowler;
-  const overNo = Math.floor(i.balls / 6) + (i.needBowler ? 1 : 1);
+  const overNo = i.xball && !i.needBowler ? i.balls / 6 : Math.floor(i.balls / 6) + 1; // the extra ball belongs to the over just bowled
   const strip = !i.needBowler && over.balls.length
       ? over.balls.map((b, k) => chip(b, animateLast && k === over.balls.length - 1)).join('') + '<span class="bdot ghost" aria-hidden="true"></span>'.repeat(Math.max(0, 6 - over.legal))
       : i.needBowler ? '<span class="empty-over">Over complete</span>' : '<span class="bdot ghost" aria-hidden="true"></span>'.repeat(6);
@@ -1841,7 +1841,7 @@ export function liveHTML(animateLast) {
     <div class="live-col">
       ${prompt}
       <div class="card">
-        <h2 class="card-title">This over${!i.needBowler ? ` <span class="dim" style="text-transform:none;letter-spacing:0;font:500 .85rem var(--f-body);color:var(--muted)">· ${esc(bw.name)} · over ${overNo}</span>` : ''}</h2>
+        <h2 class="card-title">This over${!i.needBowler ? ` <span class="dim" style="text-transform:none;letter-spacing:0;font:500 .85rem var(--f-body);color:var(--muted)">· ${esc(bw.name)} · over ${overNo}${i.xball ? ', extra ball' : ''}</span>` : ''}</h2>
         <div class="over-strip" aria-live="polite">${strip}</div>
         <div style="margin-top:14px">
           <div class="pad" role="group" aria-label="Runs off the bat">
