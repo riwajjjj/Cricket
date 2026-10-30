@@ -152,6 +152,7 @@ function runEntry(e) {
     case 'ball': return coreBall(e.ev);
     case 'bowler': return coreBowler(e.name);
     case 'relieve': return coreRelieve(e.name, e.bar);
+    case 'xball': return coreXball();
     case 'swap': return coreSwap();
     case 'retire': return coreRetire(e.who, e.name);
     case 'pen': return corePenalty(e.bat);
@@ -221,7 +222,8 @@ function coreBall(ev) {
     if (c.err) return c.err;
   }
   const st = i.batters[i.striker];
-  const cm = commSink ? { ballNo: `${Math.floor(i.balls / 6)}.${(i.balls % 6) + 1}`, runsBefore: st.runs, wkBefore: bw.wkts, partBefore: i.part.runs } : null;
+  const xb = !!i.xball; // the extra ball of an over the umpire miscounted
+  const cm = commSink ? { ballNo: xb ? `${i.balls / 6 - 1}.${6 + (over.xb || 1)}` : `${Math.floor(i.balls / 6)}.${(i.balls % 6) + 1}`, runsBefore: st.runs, wkBefore: bw.wkts, partBefore: i.part.runs } : null;
   let legal = true, total = 0, bowlerRuns = 0, ran = 0, label = '', cls = '', noneLeft = false;
   const r = ev.runs || 0;
   const dot = () => { st.dots = (st.dots || 0) + 1; };
@@ -268,7 +270,9 @@ function coreBall(ev) {
   }
   i.runs += total; bw.runs += bowlerRuns; over.runs += total; over.bowlerRuns += bowlerRuns;
   i.part.runs += total;
-  if (legal) { i.balls++; bw.balls++; over.legal++; i.part.balls++; if (bowlerRuns === 0) bw.dots++; }
+  // An extra ball the umpire allowed counts for the batter, but not in the overs, so every later over stays six balls.
+  if (legal && !xb) { i.balls++; bw.balls++; over.legal++; i.part.balls++; if (bowlerRuns === 0) bw.dots++; }
+  else if (legal) i.part.balls++;
   over.balls.push({ l: label, c: cls, li: curLi });
 
   // Batter-vs-bowler match-ups (keyed by position in this innings, so renames don't break them)
@@ -317,7 +321,8 @@ function coreBall(ev) {
   else if (legal) i.freeHit = false;
 
   let overDone = false;
-  if (legal && i.balls % 6 === 0) {
+  if (legal && xb) { overDone = true; i.xball = false; if (bowlerRuns > 0 && over.bowlerRuns === bowlerRuns && over.legal === 6 && !over.subs?.length) bw.maidens--; const t = i.striker; i.striker = i.non; i.non = t; }
+  else if (legal && i.balls % 6 === 0) {
     overDone = true;
     if (over.legal === 6 && over.bowlerRuns === 0 && !over.subs?.length) bw.maidens++; // a maiden is six balls from one bowler
     const t = i.striker; i.striker = i.non; i.non = t;
@@ -399,6 +404,7 @@ function commentAction(e, before) {
   const i = cur();
   switch (e.t) {
     case 'adjust': say('event', `Scorecard figures corrected (${e.inn < live.inns.length ? innName(live, e.inn) : 'an innings'})`); break;
+    case 'xball': say('event', `The umpire allows an extra ball in over ${i.balls / 6}, a miscount`); break;
     case 'relieve': say('event', `${i.bowlers[i.bowler].name} takes over from ${before.bowlerNow || 'the bowler'} to bowl the rest of the over${e.bar ? `. ${before.bowlerNow || 'The bowler'} can't bowl again this innings` : ''}`); break;
     case 'bowler': {
       const b = i.bowlers[i.bowler];
@@ -1398,6 +1404,17 @@ function canBowlAnother(i, k) {
   return { ok: false, max: base + (spare ? 1 : 0), base, spare };
 }
 const capText = c => c.spare && c.max > c.base ? `${plural(c.base, 'over')} (only ${c.spare === 1 ? 'one bowler' : plural(c.spare, 'bowler')} can bowl ${c.max})` : plural(c.base, 'over');
+// The umpire miscounts and lets a seventh ball be bowled. The over that just ended opens again for one more ball,
+// from the same bowler to the same batter; it doesn't count in the overs or the bowler's balls.
+function coreXball() {
+  const i = cur();
+  const over = i.overs[i.overs.length - 1];
+  if (live.status !== 'live' || !i.needBowler || i.lastBowler < 0 || !over || over.legal < 6) return 'there was no finished over to add a ball to';
+  i.needBowler = false; i.bowler = i.lastBowler; i.xball = true;
+  over.xb = (over.xb || 0) + 1;
+  const t = i.striker; i.striker = i.non; i.non = t; // the batter who faced the last ball faces again
+  return null;
+}
 // A bowler can't finish the over (an injury, say): someone else bowls the rest of it from the same end. The new
 // bowler can't be the one who bowled the over before, and can't bowl the next over either (that is the usual
 // no-two-in-a-row rule, since the over he finishes is his). With `bar`, the first bowler can't bowl again this innings.
@@ -1804,6 +1821,7 @@ export function liveHTML(animateLast) {
         ${bowlerPicker(i)}
         <button type="button" class="btn" data-act="set-bowler" style="height:42px">Start over</button>
       </div>
+      ${over && over.legal >= 6 && i.lastBowler >= 0 ? '<button type="button" class="tr-link" data-act="xball" style="margin-top:8px">The umpire allowed an extra ball in the last over</button>' : ''}
       <datalist id="live-bowlers">${bowlerOpts}</datalist>
       <p class="err-text" id="live-bowler-err"></p>
       ${prevBowler ? `<p class="hint" style="margin-top:4px">${esc(prevBowler.name)} bowled the last over and can't bowl this one.</p>` : ''}
@@ -2753,6 +2771,7 @@ export async function liveAction(action, el) {
     case 'undo': undo(); break;
     case 'goback': goBackModal(); break;
     case 'relieve': relieveModal(); break;
+    case 'xball': act({ t: 'xball' }, coreXball); break;
     case 'save-file': saveFileModal(); break;
     case 'open-file': openFileModal(); break;
     case 'figs': editFigures(Number(el.dataset.k)); break;
