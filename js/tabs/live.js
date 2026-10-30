@@ -270,6 +270,10 @@ function coreBall(ev) {
   }
   i.runs += total; bw.runs += bowlerRuns; over.runs += total; over.bowlerRuns += bowlerRuns;
   i.part.runs += total;
+  // Five penalty runs that came off this delivery (the ball hit a fielder's helmet on the ground, or was fielded
+  // illegally): the ball still counts, but the five go to extras, not to the batter or the bowler.
+  const pen = ev.pen === 5 ? 5 : 0;
+  if (pen) { i.runs += 5; i.extras.pen = (i.extras.pen || 0) + 5; over.runs += 5; i.part.runs += 5; label = label === '•' ? '5p' : `${label}+5p`; }
   // An extra ball the umpire allowed counts for the batter, but not in the overs, so every later over stays six balls.
   if (legal && !xb) { i.balls++; bw.balls++; over.legal++; i.part.balls++; if (bowlerRuns === 0) bw.dots++; }
   else if (legal) i.part.balls++;
@@ -329,6 +333,7 @@ function coreBall(ev) {
   }
   if (cm) {
     commentBall({ i, ev, bw, st, cm, total, r, batRuns, stand, strikerBefore, nonBefore, noneLeft });
+    if (pen) say('event', `5 penalty runs to ${live.teams[i.bat]} off that ball`);
     if (overDone) commentOver(i, over, bw);
   }
   const ppB = ppBallsOf(i);
@@ -2577,10 +2582,11 @@ export function wicketModal() {
 }
 
 function moreRunsModal() {
-  let ran = 1, ot = false, to = 'bat';
+  let ran = 1, ot = false, to = 'bat', pen = false;
   const body = openModal('Other runs', `
     <div class="modal-block"><p class="modal-sub">Runs completed by running</p><div class="seg" id="mr-ran">${[0, 1, 2, 3, 4, 5, 6, 7].map(r => `<button type="button" data-ran="${r}" aria-pressed="${r === ran}">${r}</button>`).join('')}</div></div>
     <div class="modal-block"><label class="check" style="font-size:.9rem;color:var(--fg-2)"><input type="checkbox" id="mr-ot"> Overthrow went to the boundary (+4)</label></div>
+    <div class="modal-block"><label class="check" style="font-size:.9rem;color:var(--fg-2)"><input type="checkbox" id="mr-pen"> Plus 5 penalty runs to the batting side: the ball hit a fielder's helmet on the ground, or was fielded illegally</label></div>
     <div class="modal-block"><p class="modal-sub">Credited to</p><div class="seg" id="mr-to"><button type="button" data-to="bat" aria-pressed="true">Batter</button><button type="button" data-to="b" aria-pressed="false">Byes</button><button type="button" data-to="lb" aria-pressed="false">Leg byes</button></div></div>
     <p class="answer" style="display:block;margin-top:16px" id="mr-sum"></p>
     <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Add runs</button></div>`);
@@ -2588,10 +2594,12 @@ function moreRunsModal() {
   const total = () => ran + (ot ? 4 : 0);
   const sum = () => {
     const t = total();
-    $('#mr-sum').innerHTML = t === 0 ? 'No runs: use the dot-ball button for this.' : `<strong>${plural(t, 'run')}</strong> to ${to === 'bat' ? 'the batter' : to === 'b' ? 'byes' : 'leg byes'}. ${ran % 2 ? 'The batters crossed, so strike changes.' : 'Strike stays the same.'}`;
+    const p = pen ? ' Plus <strong>5 penalty runs</strong> to extras. The ball counts, and the five don\'t go to the batter or the bowler.' : '';
+    $('#mr-sum').innerHTML = t === 0 ? (pen ? `A dot ball for the batter.${p}` : 'No runs: use the dot-ball button for this.') : `<strong>${plural(t, 'run')}</strong> to ${to === 'bat' ? 'the batter' : to === 'b' ? 'byes' : 'leg byes'}. ${ran % 2 ? 'The batters crossed, so strike changes.' : 'Strike stays the same.'}${p}`;
   };
   sum();
   $('#mr-ot').addEventListener('change', e => { ot = e.target.checked; sum(); });
+  $('#mr-pen').addEventListener('change', e => { pen = e.target.checked; if (pen && ran === 1 && !ot) { ran = 0; press($('#mr-ran'), 'ran', 0); } sum(); });
   body.addEventListener('click', e => {
     const a = e.target.closest('[data-ran]'), t = e.target.closest('[data-to]'), x = e.target.closest('[data-x]');
     if (a) { ran = Number(a.dataset.ran); press($('#mr-ran'), 'ran', ran); sum(); }
@@ -2599,9 +2607,9 @@ function moreRunsModal() {
     if (x) {
       if (x.dataset.x === 'cancel') { closeModal(); return; }
       const t2 = total();
-      if (t2 === 0) { toast('Pick at least one run'); return; }
+      if (t2 === 0 && !pen) { toast('Pick at least one run'); return; }
       closeModal();
-      const ev = { type: to === 'bat' ? 'run' : to, runs: t2, ran, ot: ot || undefined };
+      const ev = { type: t2 === 0 || to === 'bat' ? 'run' : to, runs: t2, ran, ot: ot || undefined, pen: pen ? 5 : undefined };
       if (to === 'bat') withShot(ev); else applyBall(ev);
     }
   });
@@ -2638,7 +2646,7 @@ function penaltyModal() {
   const body = openModal('Penalty runs', `
     <p class="modal-sub">Award 5 penalty runs to</p>
     <div class="opt-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))"><button type="button" data-pen="bat" style="font-size:1rem">${esc(bat)}<br><span style="font:500 .75rem var(--f-body);color:var(--muted)">batting now</span></button><button type="button" data-pen="fld" style="font-size:1rem">${esc(fld)}<br><span style="font:500 .75rem var(--f-body);color:var(--muted)">fielding now</span></button></div>
-    <p class="hint">Runs to the batting side are added straight to the score. Runs to the fielding side are ${esc(fieldNote)}. Neither counts as a ball.</p>`);
+    <p class="hint">Runs to the batting side are added straight to the score. Runs to the fielding side are ${esc(fieldNote)}. Neither counts as a ball. If the penalty came off a delivery (the ball hit a fielder's helmet on the ground), use <b>MORE</b> on the scoring pad instead and tick the penalty box, so the ball counts too.</p>`);
   body.addEventListener('click', e => {
     const b = e.target.closest('[data-pen]');
     if (!b) return;
