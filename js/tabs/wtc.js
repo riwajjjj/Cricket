@@ -324,6 +324,100 @@ export function renderTestTour(t, main, { busy, persist }) {
         <div class="head-actions" style="width:auto"><button type="button" class="btn ghost sm" data-tr="squads">Squads</button><button type="button" class="btn ghost sm" data-tr="w-sadd">Add a series</button>${left ? `<button type="button" class="btn ghost sm" data-tr="w-simall">Simulate ${left === league.length ? 'the cycle' : `the other ${left}`}</button>` : ''}${anySim ? '<button type="button" class="btn ghost sm danger" data-tr="w-simclear">Clear simulated results</button>' : ''}</div></div>
       ${seriesHTML || '<p class="hint" style="margin:0">No series yet. “Add a series” sets the home side, the visitors and the number of Tests.</p>'}
       <p class="hint">Each series is listed home side first. Tap a series to open or close it. “Score live” opens a Test in the live scorer; the result comes back here when it's finished. “Simulate” makes up a result (about one Test in 50 is washed out). Simulated results are marked and can be cleared.</p>
+    </div>
+    ${statsHTML(t, byId)}`;
+}
+
+/* ---------- Player and team stats ----------
+   From the Tests scored in Crease (or linked from Saved matches), the final included. Results entered by hand or
+   simulated have no scorecard, so they add nothing here. Players are told apart by team and name. */
+const oversTxt = b => `${Math.floor(b / 6)}${b % 6 ? `.${b % 6}` : ''}`;
+function testStats(t, byId) {
+    const P = new Map(), inns = [], spells = [], matchFigs = [], totals = [];
+    const get = (team, name) => {
+        const k = `${team}|${name}`.toLowerCase();
+        let x = P.get(k);
+        if (!x) { x = { key: k, name, team, tests: new Set(), inns: 0, no: 0, runs: 0, balls: 0, f4: 0, f6: 0, hs: -1, hsNo: false, n50: 0, n100: 0, bb: 0, br: 0, bw: 0, w5: 0, w10: 0, ct: 0, st: 0, ro: 0 }; P.set(k, x); }
+        return x;
+    };
+    t.fixtures.forEach(f => {
+        const m = f.matchId && byId.get(f.matchId);
+        const d = m?.data;
+        if (!d || !Array.isArray(d.inns)) return;
+        const mw = new Map(); // wickets and runs in the whole match, by bowler
+        d.inns.filter(i => !i.so).forEach((i, n) => {
+            const bt = d.teams[i.bat], bw = d.teams[1 - i.bat];
+            totals.push({ team: bt, opp: bw, runs: i.runs, wkts: i.wkts, balls: i.balls, dec: i.ended === 'declared', n, f });
+            i.batters.forEach(b => {
+                if (!b.balls && !b.out && !b.runs) return; // did not bat
+                const x = get(bt, b.name);
+                x.tests.add(f.id); x.inns++; if (!b.out) x.no++;
+                x.runs += b.runs; x.balls += b.balls; x.f4 += b.f4 || 0; x.f6 += b.f6 || 0;
+                if (b.runs >= 100) x.n100++; else if (b.runs >= 50) x.n50++;
+                if (b.runs > x.hs || (b.runs === x.hs && !b.out)) { x.hs = b.runs; x.hsNo = !b.out; }
+                inns.push({ name: b.name, team: bt, opp: bw, r: b.runs, b: b.balls, out: !!b.out });
+                const dis = b.dis;
+                if (b.out && dis && dis.fielder && ['caught', 'stumped', 'run out'].includes(dis.how)) {
+                    const fx = get(bw, dis.fielder.trim()); fx.tests.add(f.id);
+                    if (dis.how === 'caught') fx.ct++; else if (dis.how === 'stumped') fx.st++; else fx.ro++;
+                }
+            });
+            i.bowlers.forEach(b => {
+                if (!b.balls && !b.runs) return;
+                const x = get(bw, b.name);
+                x.tests.add(f.id); x.bb += b.balls; x.br += b.runs; x.bw += b.wkts;
+                if (b.wkts >= 5) x.w5++;
+                spells.push({ name: b.name, team: bw, opp: bt, w: b.wkts, r: b.runs, balls: b.balls });
+                const k = x.key, y = mw.get(k) || { name: b.name, team: bw, opp: bt, w: 0, r: 0 };
+                y.w += b.wkts; y.r += b.runs; mw.set(k, y);
+            });
+        });
+        mw.forEach((y, k) => { matchFigs.push(y); if (y.w >= 10) P.get(k).w10++; });
+    });
+    return { players: [...P.values()], inns, spells, matchFigs, totals, tests: t.fixtures.filter(f => f.matchId && byId.get(f.matchId)?.data).length };
+}
+function statBoard(title, rows, val, sub, note = '') {
+    return `<div class="card"><h2 class="card-title">${esc(title)}</h2>${rows.length
+        ? `<table class="tbl"><tbody>${rows.map((r, k) => `<tr><td class="dim">${k + 1}</td><td>${esc(r.name)}<div class="dim" style="font-size:.78rem">${esc(r.team)}</div></td><td class="num"><b>${val(r)}</b></td><td class="num dim" style="font-size:.8rem">${sub(r)}</td></tr>`).join('')}</tbody></table>${note ? `<p class="hint" style="margin-bottom:0">${esc(note)}</p>` : ''}`
+        : '<p class="hint" style="margin:0">None yet.</p>'}</div>`;
+}
+function statsHTML(t, byId) {
+    const S = testStats(t, byId);
+    const L = S.players;
+    const top = (ok, sort, n = 5) => L.filter(ok).sort(sort).slice(0, n);
+    const avg = x => (x.inns - x.no > 0 ? x.runs / (x.inns - x.no) : null);
+    const bavg = x => (x.bw ? x.br / x.bw : null);
+    const runs = top(x => x.inns > 0, (a, b) => b.runs - a.runs || (avg(b) ?? 0) - (avg(a) ?? 0));
+    const wkts = top(x => x.bw > 0, (a, b) => b.bw - a.bw || bavg(a) - bavg(b));
+    const minInns = Math.min(4, L.reduce((m, x) => Math.max(m, x.inns), 0));
+    const avgs = top(x => x.inns >= minInns && avg(x) != null, (a, b) => avg(b) - avg(a) || b.runs - a.runs);
+    const topW = L.reduce((m, x) => Math.max(m, x.bw), 0), minW = Math.min(10, Math.max(1, Math.ceil(topW / 3)));
+    const bavgs = top(x => x.bw >= minW, (a, b) => bavg(a) - bavg(b) || b.bw - a.bw);
+    const tons = top(x => x.n100 > 0, (a, b) => b.n100 - a.n100 || b.n50 - a.n50 || b.runs - a.runs);
+    const sixes = top(x => x.f6 > 0, (a, b) => b.f6 - a.f6 || b.runs - a.runs);
+    const field = top(x => x.ct + x.st > 0, (a, b) => b.ct + b.st - (a.ct + a.st) || b.ct - a.ct);
+    const hs = S.inns.slice().sort((a, b) => b.r - a.r || (a.out - b.out) || a.b - b.b).slice(0, 5);
+    const bestI = S.spells.filter(x => x.w > 0).sort((a, b) => b.w - a.w || a.r - b.r).slice(0, 5);
+    const bestM = S.matchFigs.filter(x => x.w > 0).sort((a, b) => b.w - a.w || a.r - b.r).slice(0, 5);
+    const hiT = S.totals.slice().sort((a, b) => b.runs - a.runs).slice(0, 5).map(x => ({ ...x, name: x.team, team: `v ${x.opp}` }));
+    const loT = S.totals.filter(x => x.wkts >= 10).sort((a, b) => a.runs - b.runs).slice(0, 5).map(x => ({ ...x, name: x.team, team: `v ${x.opp}` }));
+    const sr = x => (x.balls ? nf(x.runs / x.balls * 100, 1) : '—');
+    const head = `<div class="card"><h2 class="card-title">Player stats</h2><p class="hint" style="margin:0">${S.tests ? `From ${plural(S.tests, 'Test')} scored in Crease.${t.fixtures.some(f => !f.matchId && (f.manual || f.nr)) ? ' Results entered by hand or simulated have no scorecard, so they aren\'t counted.' : ''}` : 'Runs, wickets and records fill in as Tests are scored here (with “Score live”, or by linking a saved match). Results entered by hand or simulated have no scorecard, so they don\'t count.'}</p></div>`;
+    if (!L.length) return head;
+    return `${head}
+    <div class="grid-2" style="align-items:start">
+      ${statBoard('Most runs', runs, x => x.runs, x => `${plural(x.inns, 'inns', 'inns')} · avg ${avg(x) != null ? nf(avg(x), 2) : '—'}${x.n100 ? ` · ${plural(x.n100, 'hundred')}` : ''}${x.n50 ? ` · ${plural(x.n50, 'fifty', 'fifties')}` : ''}`)}
+      ${statBoard('Most wickets', wkts, x => x.bw, x => `avg ${nf(bavg(x), 2)} · ${oversTxt(x.bb)} ov${x.w5 ? ` · ${x.w5}×5w` : ''}`)}
+      ${statBoard('Highest scores', hs, x => `${x.r}${x.out ? '' : '*'}`, x => `${x.b} balls v ${esc(x.opp)}`)}
+      ${statBoard('Best bowling in an innings', bestI, x => `${x.w}/${x.r}`, x => `${oversTxt(x.balls)} ov v ${esc(x.opp)}`)}
+      ${statBoard('Best match figures', bestM, x => `${x.w}/${x.r}`, x => `v ${esc(x.opp)}`, 'Both innings of one Test.')}
+      ${statBoard('Most hundreds', tons, x => x.n100, x => `${x.n50} fifties · ${x.runs} runs`)}
+      ${statBoard('Best batting average', avgs, x => nf(avg(x), 2), x => `${x.runs} runs · SR ${sr(x)}`, `At least ${plural(minInns, 'innings', 'innings')} and out at least once.`)}
+      ${statBoard('Best bowling average', bavgs, x => nf(bavg(x), 2), x => `${plural(x.bw, 'wkt')} · econ ${x.bb ? nf(x.br / (x.bb / 6), 2) : '—'}`, `At least ${plural(minW, 'wicket')}.`)}
+      ${statBoard('Most catches and stumpings', field, x => x.ct + x.st, x => `${plural(x.ct, 'catch', 'catches')}${x.st ? ` · ${x.st} st` : ''}`)}
+      ${statBoard('Most sixes', sixes, x => x.f6, x => `${x.runs} runs`)}
+      ${statBoard('Highest team totals', hiT, x => `${x.runs}${x.wkts < 10 ? `/${x.wkts}${x.dec ? 'd' : ''}` : ''}`, x => `${oversTxt(x.balls)} ov`)}
+      ${statBoard('Lowest all-out totals', loT, x => x.runs, x => `${oversTxt(x.balls)} ov`)}
     </div>`;
 }
 
