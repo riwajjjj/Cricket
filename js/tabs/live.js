@@ -92,6 +92,8 @@ export const benchOf = (m, team) => { const sq = m?.impact ? sqOf(m, team) : nul
 export const playersOf = (m, team) => { const sq = sqOf(m, team), b = benchOf(m, team); return sq && b ? sq.filter(n => n.toLowerCase() !== b.toLowerCase()) : sq; };
 export const ppsOf = (m, inn) => (inn?.so ? 3 : sizeOf(m, inn.bat) || m.pps); // a super over has two wickets
 const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
+// Who bowled an over: one name, or the first bowler and whoever finished it.
+const overBowlers = (inn, o) => [o.bowler, ...(o.subs || []).map(x => x.bowler)].map(k => inn.bowlers[k]?.name).filter(Boolean).join(' / ');
 const selectField = (id, label, opts, sel) => `<div class="field"><div class="lab"><label for="${id}">${esc(label)}</label></div><select id="${id}">${opts.map(o => `<option value="${esc(o.v)}"${o.v === sel ? ' selected' : ''}>${esc(o.l)}</option>`).join('')}</select></div>`;
 export const freshLeft = i => ppsOf(live, i) - i.batters.length;
 export const canBringIn = i => freshLeft(i) > 0 || i.batters.some(b => b.retired);
@@ -149,6 +151,7 @@ function runEntry(e) {
   switch (e.t) {
     case 'ball': return coreBall(e.ev);
     case 'bowler': return coreBowler(e.name);
+    case 'relieve': return coreRelieve(e.name, e.bar);
     case 'swap': return coreSwap();
     case 'retire': return coreRetire(e.who, e.name);
     case 'pen': return corePenalty(e.bat);
@@ -316,7 +319,7 @@ function coreBall(ev) {
   let overDone = false;
   if (legal && i.balls % 6 === 0) {
     overDone = true;
-    if (over.legal === 6 && over.bowlerRuns === 0) bw.maidens++;
+    if (over.legal === 6 && over.bowlerRuns === 0 && !over.subs?.length) bw.maidens++; // a maiden is six balls from one bowler
     const t = i.striker; i.striker = i.non; i.non = t;
   }
   if (cm) {
@@ -388,7 +391,7 @@ function commentOver(i, over, bw) {
   const crease = [i.striker, i.non].map(k => i.batters[k]).filter(b => b && !b.out).map(b => `${b.name} ${b.runs}* (${b.balls})`).join(', ');
   const cap = maxBallsOf(i);
   const chase = i.target != null && i.target > i.runs && cap != null && cap > i.balls ? ` · need ${i.target - i.runs} off ${plural(cap - i.balls, 'ball')}` : '';
-  const maiden = over.legal === 6 && over.bowlerRuns === 0;
+  const maiden = over.legal === 6 && over.bowlerRuns === 0 && !over.subs?.length;
   say('over', `End of over ${i.balls / 6}: ${plural(over.runs, 'run')}${maiden ? ' (maiden)' : ''}${over.wkts ? `, ${plural(over.wkts, 'wicket')}` : ''} · ${live.teams[i.bat]} ${i.runs}/${i.wkts}${chase}${crease ? ` · ${crease}` : ''} · ${bw.name} ${fmtOvers(bw.balls)}-${bw.maidens}-${bw.runs}-${bw.wkts}`);
 }
 // Lines for actions other than balls, worked out from the match before and after the action.
@@ -396,6 +399,7 @@ function commentAction(e, before) {
   const i = cur();
   switch (e.t) {
     case 'adjust': say('event', `Scorecard figures corrected (${e.inn < live.inns.length ? innName(live, e.inn) : 'an innings'})`); break;
+    case 'relieve': say('event', `${i.bowlers[i.bowler].name} takes over from ${before.bowlerNow || 'the bowler'} to bowl the rest of the over${e.bar ? `. ${before.bowlerNow || 'The bowler'} can't bowl again this innings` : ''}`); break;
     case 'bowler': {
       const b = i.bowlers[i.bowler];
       if (b && b.balls === 0 && !before.bowlers.includes(b.name.toLowerCase())) say('event', `${b.name} comes into the attack`);
@@ -444,7 +448,7 @@ export function commentaryOf(m) {
     for (; st.k < m.log.length; st.k++) {
       curLi = st.k;
       const c = cur();
-      const before = { bowlers: c.bowlers.map(b => b.name.toLowerCase()), crease: [c.batters[c.striker]?.name, c.batters[c.non]?.name], newBallFrom: c.newBall || 0 };
+      const before = { bowlers: c.bowlers.map(b => b.name.toLowerCase()), crease: [c.batters[c.striker]?.name, c.batters[c.non]?.name], newBallFrom: c.newBall || 0, bowlerNow: c.bowlers[c.bowler]?.name };
       if (runEntry(m.log[st.k])) { st.failed = true; break; }
       if (m.log[st.k].t !== 'ball') commentAction(m.log[st.k], before);
       live.inns.forEach((inn, j) => {
@@ -610,7 +614,7 @@ function openEditBall(li) {
   if (!canEdit() || !live.log[li]) return;
   const entry = live.log[li];
   let label = '', cls = '', where = '';
-  live.inns.forEach((inn, k) => inn.overs.forEach((o, n) => o.balls.forEach(b => { if (b.li === li) { label = b.l; cls = b.c; where = `${live.teams[inn.bat]} innings, over ${n + 1}, bowled by ${inn.bowlers[o.bowler]?.name || '?'}`; } })));
+  live.inns.forEach((inn, k) => inn.overs.forEach((o, n) => o.balls.forEach(b => { if (b.li === li) { label = b.l; cls = b.c; where = `${live.teams[inn.bat]} innings, over ${n + 1}, bowled by ${overBowlers(inn, o) || '?'}`; } })));
   if (entry.t !== 'ball') {
     const body = openModal('Edit penalty runs', `<p style="margin:0;color:var(--fg-2)">${esc(where)}: 5 penalty runs.</p>
       <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn solid-danger" data-x="del">Remove penalty</button></div>`);
@@ -1371,6 +1375,7 @@ function coreBowler(name) {
   if (bench && sameName(bench, nm)) return live.subs?.[1 - i.bat] ? `${bench} has been replaced by the impact player.` : `${bench} is the impact player and hasn't come on yet.`;
   let idx = i.bowlers.findIndex(b => sameName(b.name, nm));
   if (idx !== -1 && idx === i.lastBowler) return `${i.bowlers[idx].name} bowled the last over. Pick someone else.`;
+  if (idx !== -1 && (i.barred || []).includes(idx)) return `${i.bowlers[idx].name} can't bowl again this innings.`;
   if (live.overs) {
     const c = canBowlAnother(i, idx);
     if (!c.ok) return idx === -1 ? `No more bowlers can start: the limit is ${capText(c)}.` : `${i.bowlers[idx].name} has bowled the maximum: ${capText(c)}.`;
@@ -1393,9 +1398,61 @@ function canBowlAnother(i, k) {
   return { ok: false, max: base + (spare ? 1 : 0), base, spare };
 }
 const capText = c => c.spare && c.max > c.base ? `${plural(c.base, 'over')} (only ${c.spare === 1 ? 'one bowler' : plural(c.spare, 'bowler')} can bowl ${c.max})` : plural(c.base, 'over');
+// A bowler can't finish the over (an injury, say): someone else bowls the rest of it from the same end. The new
+// bowler can't be the one who bowled the over before, and can't bowl the next over either (that is the usual
+// no-two-in-a-row rule, since the over he finishes is his). With `bar`, the first bowler can't bowl again this innings.
+function coreRelieve(name, bar) {
+  const i = cur();
+  const nm = (name || '').trim();
+  if (live.status !== 'live' || i.needBowler) return 'that over had already ended';
+  if (!nm) return 'Pick the new bowler.';
+  const over = i.overs[i.overs.length - 1];
+  const benchP = benchOf(live, 1 - i.bat);
+  if (benchP && sameName(benchP, nm)) return live.subs?.[1 - i.bat] ? `${benchP} has been replaced by the impact player.` : `${benchP} is the impact player and hasn't come on yet.`;
+  let idx = i.bowlers.findIndex(b => sameName(b.name, nm));
+  if (idx === i.bowler) return `${i.bowlers[idx].name} is already bowling this over.`;
+  if (idx !== -1 && idx === i.lastBowler) return `${i.bowlers[idx].name} bowled the last over. Pick someone else.`;
+  if (idx !== -1 && (i.barred || []).includes(idx)) return `${i.bowlers[idx].name} can't bowl again this innings.`;
+  if (live.overs) {
+    const c = canBowlAnother(i, idx);
+    if (!c.ok) return idx === -1 ? `No more bowlers can start: the limit is ${capText(c)}.` : `${i.bowlers[idx].name} has bowled the maximum: ${capText(c)}.`;
+  }
+  const from = i.bowler;
+  if (idx === -1) { i.bowlers.push(mkBowler(nm)); idx = i.bowlers.length - 1; }
+  if (bar && !(i.barred || []).includes(from)) (i.barred = i.barred || []).push(from);
+  if (over.balls.length) (over.subs = over.subs || []).push({ at: over.legal, bowler: idx, from });
+  else over.bowler = idx; // nothing bowled yet: the over simply has a different bowler
+  i.bowler = idx;
+  return null;
+}
 export function setBowler(name) {
   const err = act({ t: 'bowler', name: (name || '').trim() }, () => coreBowler(name));
   if (err) { const el = $('#live-bowler-err'); if (el) el.textContent = err; }
+}
+
+function relieveModal() {
+  if (!live || live.status !== 'live') return;
+  const i = cur();
+  if (i.needBowler) return;
+  const over = i.overs[i.overs.length - 1], cb = i.bowlers[i.bowler];
+  const bowled = over.legal ? `${plural(over.legal, 'ball')} of over ${i.overs.length} done` : 'No ball bowled yet';
+  const body = openModal('Change bowler', `
+    <p style="margin:0 0 12px;color:var(--fg-2)">${esc(cb.name)} is bowling. ${esc(bowled)}. The new bowler bowls the rest of the over from the same end, and can't bowl the next over. Each bowler keeps the balls, runs and wickets from their own deliveries.</p>
+    <datalist id="rl-list">${i.bowlers.filter((b, k) => k !== i.bowler && k !== i.lastBowler && !(i.barred || []).includes(k)).map(b => `<option value="${esc(b.name)}"></option>`).join('')}</datalist>
+    ${bowlerPicker(i, 'rl-bowler', true)}
+    <label class="check" style="margin-top:10px"><input type="checkbox" id="rl-bar" checked> ${esc(cb.name)} can't bowl again this innings (injured)</label>
+    <p class="err-text" id="rl-err"></p>
+    <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Change bowler</button></div>`);
+  body.addEventListener('click', e => {
+    const x = e.target.closest('[data-x]');
+    if (!x) return;
+    if (x.dataset.x === 'ok') {
+      const name = $('#rl-bowler', body)?.value, bar = $('#rl-bar', body).checked;
+      const err = act({ t: 'relieve', name, bar }, () => coreRelieve(name, bar));
+      if (err) { $('#rl-err', body).textContent = `Can't change: ${err.replace(/\.$/, '')}.`; return; }
+    }
+    closeModal();
+  });
 }
 
 // Undo works from saved copies of the match for the last 60 actions (40 after a reload). Past those,
@@ -1692,17 +1749,17 @@ function srClass(b) {
   return sr >= par ? 'sr-hi' : sr >= par * 0.75 ? 'sr-mid' : 'sr-lo';
 }
 const BAT_ICON = '<svg class="bat-ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 1.2l1.2 1.2-2.6 2.6.4.4-6.9 6.9c-.6.6-1.6.6-2.2 0l-.9-.9c-.6-.6-.6-1.6 0-2.2l6.9-6.9.4.4z" fill="currentColor"/><circle cx="3" cy="13" r="1.6" fill="currentColor" opacity=".55"/></svg>';
-function bowlerPicker(i) {
+function bowlerPicker(i, id = 'live-bowler', mid = false) {
   const fsq = playersOf(live, 1 - i.bat);
-  if (!fsq) return liveField('live-bowler', 'Bowler', '', { list: 'live-bowlers' });
+  if (!fsq) return liveField(id, 'Bowler', '', { list: mid ? 'rl-list' : 'live-bowlers' });
   const find = nm => i.bowlers.findIndex(b => sameName(b.name, nm));
-  const eligible = fsq.filter(nm => { const k = find(nm); return (k === -1 || k !== i.lastBowler) && (!live.overs || canBowlAnother(i, k).ok); });
+  const eligible = fsq.filter(nm => { const k = find(nm); return (k === -1 || (k !== i.lastBowler && !(i.barred || []).includes(k) && !(mid && k === i.bowler))) && (!live.overs || canBowlAnother(i, k).ok); });
   // Default: whoever bowled the over before last (the usual change of ends), then another recent bowler, then the tail.
   const recent = i.overs.slice(0, -1).reverse().map(o => i.bowlers[o.bowler]?.name).filter(Boolean);
   const sel = recent.find(nm => eligible.some(e => sameName(e, nm))) || eligible[eligible.length - 1];
   const opts = eligible.map(nm => { const k = find(nm); const b = i.bowlers[k]; const t = nm + roleTag(live, 1 - i.bat, nm); return { v: nm, l: b ? `${t} · ${fmtOvers(b.balls)}-${b.maidens}-${b.runs}-${b.wkts}` : t }; });
   if (!opts.length) return '<p class="err-text">Nobody in the squad is able to bowl this over.</p>';
-  return selectField('live-bowler', 'Bowler', opts, eligible.find(e => sameName(e, sel)));
+  return selectField(id, 'Bowler', opts, eligible.find(e => sameName(e, sel)));
 }
 // How many overs each bowler has left. When the overs don't divide by five, the spare overs go to as few bowlers as possible.
 function quotaHTML(i) {
@@ -1740,7 +1797,7 @@ export function liveHTML(animateLast) {
       ? over.balls.map((b, k) => chip(b, animateLast && k === over.balls.length - 1)).join('') + '<span class="bdot ghost" aria-hidden="true"></span>'.repeat(Math.max(0, 6 - over.legal))
       : i.needBowler ? '<span class="empty-over">Over complete</span>' : '<span class="bdot ghost" aria-hidden="true"></span>'.repeat(6);
   const prevBowler = i.lastBowler >= 0 ? i.bowlers[i.lastBowler] : null;
-  const bowlerOpts = i.bowlers.filter((b, k) => k !== i.lastBowler).map(b => `<option value="${esc(b.name)}"></option>`).join('');
+  const bowlerOpts = i.bowlers.filter((b, k) => k !== i.lastBowler && !(i.barred || []).includes(k)).map(b => `<option value="${esc(b.name)}"></option>`).join('');
   const prompt = i.needBowler ? `<div class="card prompt-card">
       <h2 class="card-title">Over ${overNo}: who's bowling?</h2>
       <div class="prompt-row">
@@ -1785,6 +1842,7 @@ export function liveHTML(animateLast) {
             ${impactAvail() ? '<button type="button" class="btn ghost sm" data-act="impact">Impact player</button>' : ''}
             ${live.overs && !isTest() && !i.so ? '<button type="button" class="btn ghost sm" data-act="rain">Rain / stoppage</button>' : ''}
             <button type="button" class="btn ghost sm" data-act="rename">Edit names</button>
+            <button type="button" class="btn ghost sm" data-act="relieve">Change bowler</button>
             ${canEdit() ? '<button type="button" class="btn ghost sm" data-act="goback">Go back to an over</button>' : ''}
             <button type="button" class="btn ghost sm" data-act="save-file">Save match file</button>
             <button type="button" class="btn ghost sm danger" data-act="end-inn">${isTest() ? 'Declare' : 'End innings'}</button>
@@ -1811,7 +1869,7 @@ export function liveHTML(animateLast) {
       </div>
       ${commentaryCardHTML()}
       ${matchupsCard(i)}
-      ${lastOvers.length ? `<details class="card fold" data-fold="ro"${isOpen('ro') ? ' open' : ''}><summary><h2 class="card-title">Recent overs</h2><span class="fold-peek">Over ${i.overs.indexOf(lastOvers[0]) + 1}: ${lastOvers[0].runs} run${lastOvers[0].runs === 1 ? '' : 's'}${lastOvers[0].wkts ? `, ${plural(lastOvers[0].wkts, 'wicket')}` : ''}</span></summary><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><tbody>${lastOvers.map(o => { const n = i.overs.indexOf(o) + 1; return `<tr><td class="dim">Ov ${n}</td><td>${esc(i.bowlers[o.bowler].name)}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true)).join('')}</span></td><td class="num"><b>${o.runs}</b>${o.wkts ? ` <span class="neg">${o.wkts}w</span>` : ''}</td></tr>`; }).join('')}</tbody></table></div></details>` : ''}
+      ${lastOvers.length ? `<details class="card fold" data-fold="ro"${isOpen('ro') ? ' open' : ''}><summary><h2 class="card-title">Recent overs</h2><span class="fold-peek">Over ${i.overs.indexOf(lastOvers[0]) + 1}: ${lastOvers[0].runs} run${lastOvers[0].runs === 1 ? '' : 's'}${lastOvers[0].wkts ? `, ${plural(lastOvers[0].wkts, 'wicket')}` : ''}</span></summary><div class="tbl-wrap" style="margin-top:0"><table class="tbl"><tbody>${lastOvers.map(o => { const n = i.overs.indexOf(o) + 1; return `<tr><td class="dim">Ov ${n}</td><td>${esc(overBowlers(i, o))}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true)).join('')}</span></td><td class="num"><b>${o.runs}</b>${o.wkts ? ` <span class="neg">${o.wkts}w</span>` : ''}</td></tr>`; }).join('')}</tbody></table></div></details>` : ''}
     </div>
   </div>
   ${situationHTML(liveSituation())}
@@ -2050,7 +2108,7 @@ function partsHTML(m, i) {
 // The over-by-over table inside a scorecard's "Ball by ball" section.
 function bbbBody(m, i) {
   const ov = i.overs.filter(o => o.balls.length);
-  return `<div class="tbl-wrap"><table class="tbl"><tbody>${ov.map(o => `<tr><td class="dim">Ov ${i.overs.indexOf(o) + 1}</td><td>${esc(i.bowlers[o.bowler]?.name || '')}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true, m)).join('')}</span></td><td class="num"><b>${o.runs}</b></td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="tbl-wrap"><table class="tbl"><tbody>${ov.map(o => `<tr><td class="dim">Ov ${i.overs.indexOf(o) + 1}</td><td>${esc(overBowlers(i, o))}</td><td style="white-space:normal"><span class="mini-chips">${o.balls.map(b => chip(b, false, true, m)).join('')}</span></td><td class="num"><b>${o.runs}</b></td></tr>`).join('')}</tbody></table></div>`;
 }
 const bbbOpen = new Set(); // which live innings have "Ball by ball" open, kept across re-renders
 export function scorecardHTML(m, idx) {
@@ -2694,6 +2752,7 @@ export async function liveAction(action, el) {
     case 'rename': renameModal(); break;
     case 'undo': undo(); break;
     case 'goback': goBackModal(); break;
+    case 'relieve': relieveModal(); break;
     case 'save-file': saveFileModal(); break;
     case 'open-file': openFileModal(); break;
     case 'figs': editFigures(Number(el.dataset.k)); break;
