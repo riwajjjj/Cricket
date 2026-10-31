@@ -297,7 +297,7 @@ export function renderTestTour(t, main, { busy, persist }) {
         const del = st.done ? '' : `<button type="button" class="btn ghost sm danger" data-tr="w-sdel" data-s="${s.id}">Remove series</button>`;
         return `<details class="fold w-series" data-s="${s.id}"${open ? ' open' : ''}><summary><span class="w-s-name"><b>${esc(s.home)} v ${esc(s.away)}</b>${s.trophy ? ` <span class="dim">· ${esc(s.trophy)}</span>` : ''}</span><span class="fold-peek" style="display:block">${esc(seriesScore(s, st))}${s.when ? ` · ${esc(s.when)}` : ''}</span></summary>
       ${tests.map(f => testRow(t, f, byId, busy)).join('')}
-      <div class="fx-acts" style="margin-top:6px">${del}<button type="button" class="btn ghost sm" data-tr="w-sedit" data-s="${s.id}">Edit series</button></div></details>`;
+      <div class="fx-acts" style="margin-top:6px">${del}${scoredIn(t, s.id, byId) ? `<button type="button" class="btn ghost sm" data-ws="${s.id}">Series stats</button>` : ''}<button type="button" class="btn ghost sm" data-tr="w-sedit" data-s="${s.id}">Edit series</button></div></details>`;
     }).join('');
     const hasDed = rows.some(r => r.ded);
     main.innerHTML = `
@@ -332,7 +332,8 @@ export function renderTestTour(t, main, { busy, persist }) {
    From the Tests scored in Crease (or linked from Saved matches), the final included. Results entered by hand or
    simulated have no scorecard, so they add nothing here. Players are told apart by team and name. */
 const oversTxt = b => `${Math.floor(b / 6)}${b % 6 ? `.${b % 6}` : ''}`;
-function testStats(t, byId) {
+function testStats(t, byId, sid = '') {
+    const fxs = t.fixtures.filter(f => !sid || f.series === sid); // one series, or the whole cycle (final included)
     const P = new Map(), inns = [], spells = [], matchFigs = [], totals = [];
     const get = (team, name) => {
         const k = `${team}|${name}`.toLowerCase();
@@ -340,7 +341,7 @@ function testStats(t, byId) {
         if (!x) { x = { key: k, name, team, tests: new Set(), inns: 0, no: 0, runs: 0, balls: 0, f4: 0, f6: 0, hs: -1, hsNo: false, n50: 0, n100: 0, bb: 0, br: 0, bw: 0, w5: 0, w10: 0, ct: 0, st: 0, ro: 0 }; P.set(k, x); }
         return x;
     };
-    t.fixtures.forEach(f => {
+    fxs.forEach(f => {
         const m = f.matchId && byId.get(f.matchId);
         const d = m?.data;
         if (!d || !Array.isArray(d.inns)) return;
@@ -374,15 +375,25 @@ function testStats(t, byId) {
         });
         mw.forEach((y, k) => { matchFigs.push(y); if (y.w >= 10) P.get(k).w10++; });
     });
-    return { players: [...P.values()], inns, spells, matchFigs, totals, tests: t.fixtures.filter(f => f.matchId && byId.get(f.matchId)?.data).length };
+    return { players: [...P.values()], inns, spells, matchFigs, totals, tests: fxs.filter(f => f.matchId && byId.get(f.matchId)?.data).length };
 }
 function statBoard(title, rows, val, sub, note = '') {
     return `<div class="card"><h2 class="card-title">${esc(title)}</h2>${rows.length
         ? `<table class="tbl"><tbody>${rows.map((r, k) => `<tr><td class="dim">${k + 1}</td><td>${esc(r.name)}<div class="dim" style="font-size:.78rem">${esc(r.team)}</div></td><td class="num"><b>${val(r)}</b></td><td class="num dim" style="font-size:.8rem">${sub(r)}</td></tr>`).join('')}</tbody></table>${note ? `<p class="hint" style="margin-bottom:0">${esc(note)}</p>` : ''}`
         : '<p class="hint" style="margin:0">None yet.</p>'}</div>`;
 }
+// Which stats are showing, per tournament: '' for the whole cycle, or a series id.
+const statScope = new Map();
+let statsCtx = null;
+const scoredIn = (t, sid, byId) => t.fixtures.some(f => f.series === sid && f.matchId && byId.get(f.matchId)?.data);
+const seriesName = s => `${s.home} v ${s.away}${s.trophy ? ` (${s.trophy})` : ''}`;
 function statsHTML(t, byId) {
-    const S = testStats(t, byId);
+    statsCtx = t;
+    const scored = (t.series || []).filter(s => scoredIn(t, s.id, byId));
+    let sid = statScope.get(t.id) || '';
+    if (sid && !scored.some(s => s.id === sid)) sid = '';
+    const ser = sid ? t.series.find(s => s.id === sid) : null;
+    const S = testStats(t, byId, sid);
     const L = S.players;
     const top = (ok, sort, n = 5) => L.filter(ok).sort(sort).slice(0, n);
     const avg = x => (x.inns - x.no > 0 ? x.runs / (x.inns - x.no) : null);
@@ -402,9 +413,10 @@ function statsHTML(t, byId) {
     const hiT = S.totals.slice().sort((a, b) => b.runs - a.runs).slice(0, 5).map(x => ({ ...x, name: x.team, team: `v ${x.opp}` }));
     const loT = S.totals.filter(x => x.wkts >= 10).sort((a, b) => a.runs - b.runs).slice(0, 5).map(x => ({ ...x, name: x.team, team: `v ${x.opp}` }));
     const sr = x => (x.balls ? nf(x.runs / x.balls * 100, 1) : '—');
-    const head = `<div class="card"><h2 class="card-title">Player stats</h2><p class="hint" style="margin:0">${S.tests ? `From ${plural(S.tests, 'Test')} scored in Crease.${t.fixtures.some(f => !f.matchId && (f.manual || f.nr)) ? ' Results entered by hand or simulated have no scorecard, so they aren\'t counted.' : ''}` : 'Runs, wickets and records fill in as Tests are scored here (with “Score live”, or by linking a saved match). Results entered by hand or simulated have no scorecard, so they don\'t count.'}</p></div>`;
-    if (!L.length) return head;
-    return `${head}
+    const pick = scored.length ? `<div class="field" style="margin:0 0 10px"><div class="lab"><label for="w-stat-scope">Show stats for</label></div><select id="w-stat-scope"><option value="">The whole cycle</option>${scored.map(s => `<option value="${s.id}"${s.id === sid ? ' selected' : ''}>${esc(seriesName(s))}</option>`).join('')}</select></div>` : '';
+    const head = `<div class="card"><h2 class="card-title">${ser ? `Series stats: ${esc(ser.home)} v ${esc(ser.away)}` : 'Player stats'}</h2>${pick}<p class="hint" style="margin:0">${S.tests ? `From ${ser ? `${S.tests} of the ${plural(t.fixtures.filter(f => f.series === sid).length, 'Test')} in this series` : plural(S.tests, 'Test')} scored in Crease.${t.fixtures.some(f => (!sid || f.series === sid) && !f.matchId && (f.manual || f.nr)) ? ' Results entered by hand or simulated have no scorecard, so they aren\'t counted.' : ''}` : 'Runs, wickets and records fill in as Tests are scored here (with “Score live”, or by linking a saved match). Results entered by hand or simulated have no scorecard, so they don\'t count.'}</p></div>`;
+    if (!L.length) return `<div id="w-stats">${head}</div>`;
+    return `<div id="w-stats">${head}
     <div class="grid-2" style="align-items:start">
       ${statBoard('Most runs', runs, x => x.runs, x => `${plural(x.inns, 'inns', 'inns')} · avg ${avg(x) != null ? nf(avg(x), 2) : '—'}${x.n100 ? ` · ${plural(x.n100, 'hundred')}` : ''}${x.n50 ? ` · ${plural(x.n50, 'fifty', 'fifties')}` : ''}`)}
       ${statBoard('Most wickets', wkts, x => x.bw, x => `avg ${nf(bavg(x), 2)} · ${oversTxt(x.bb)} ov${x.w5 ? ` · ${x.w5}×5w` : ''}`)}
@@ -418,7 +430,7 @@ function statsHTML(t, byId) {
       ${statBoard('Most sixes', sixes, x => x.f6, x => `${x.runs} runs`)}
       ${statBoard('Highest team totals', hiT, x => `${x.runs}${x.wkts < 10 ? `/${x.wkts}${x.dec ? 'd' : ''}` : ''}`, x => `${oversTxt(x.balls)} ov`)}
       ${statBoard('Lowest all-out totals', loT, x => x.runs, x => `${oversTxt(x.balls)} ov`)}
-    </div>`;
+    </div></div>`;
 }
 
 /* ---------- Forms ---------- */
@@ -647,7 +659,18 @@ export async function testTourAction(t, a, f, b, { save, busy }) {
 }
 
 // Remember series the viewer opens or closes, so a re-render keeps them that way.
+// Switching the stats between the whole cycle and one series redraws just the stats.
+function showStats(sid, scroll) {
+    const t = statsCtx, box = document.getElementById('w-stats');
+    if (!t || !box) return;
+    statScope.set(t.id, sid);
+    box.outerHTML = statsHTML(t, byIdNow());
+    if (scroll) document.getElementById('w-stats')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+document.addEventListener('change', e => { if (e.target.id === 'w-stat-scope') showStats(e.target.value, false); });
 document.addEventListener('click', e => {
+    const ws = e.target.closest?.('[data-ws]');
+    if (ws) { showStats(ws.dataset.ws, true); return; }
     const sum = e.target.closest?.('.w-series > summary');
     if (sum) { openSeries.set(sum.parentElement.dataset.s, !sum.parentElement.open); return; }
     // Working inside a series keeps it open, even once its last Test has a result.
