@@ -15,6 +15,7 @@ import { saveMatch } from './saved.js';
 export let live = store.get('live', null);
 export let undoStack = store.get('liveUndo', []);
 if (!Array.isArray(undoStack)) undoStack = [];
+if (undoStack.length > 5) { undoStack = undoStack.slice(-5); store.set('liveUndo', undoStack); } // older versions kept 40, which could fill the storage
 if (live && (!Array.isArray(live.inns) || !live.inns.length)) live = null;
 
 export const mkBatter = name => ({ name, runs: 0, balls: 0, f4: 0, f6: 0, dots: 0, out: false, how: 'not out' });
@@ -53,7 +54,9 @@ export const innName = (m, k) => { const i = m.inns[k]; return isTest(m) ? `${OR
 // The match is saved after every action. The undo history (up to 40 full copies of the match, several
 // megabytes in a long Test) is written once scoring pauses, and when the page is closed.
 let undoSaveTimer = 0;
-const saveUndo = () => { clearTimeout(undoSaveTimer); undoSaveTimer = 0; store.set('liveUndo', undoStack.slice(-40)); };
+// Only the last few undo copies are kept in storage (each is a whole match, and a long Test fills the browser's
+// storage fast); undo past them rebuilds the match from its ball-by-ball record, so nothing is lost.
+const saveUndo = () => { clearTimeout(undoSaveTimer); undoSaveTimer = 0; store.set('liveUndo', undoStack.slice(-5)); };
 // Recent copies of the match in progress (the last three matches, one copy each), refreshed a few seconds after
 // scoring pauses. If the live match is lost or replaced, "Open a match file" on the new-match screen lists them.
 let snapTimer = 0;

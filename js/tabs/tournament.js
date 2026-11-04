@@ -16,10 +16,10 @@ import { blankTour, indNzTemplate, isTour, legOf, matchName, renderTour, tourAct
 
 const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 const list = () => { const v = store.get('tournaments', []); return Array.isArray(v) ? v : []; };
-const saveAll = ts => store.set('tournaments', ts);
+const saveAll = ts => store.set('tournaments', ts); // false when storage is full
 const activeId = () => store.get('tour.active', null);
 function active() { const ts = list(); return ts.find(t => t.id === activeId()) || ts[0] || null; }
-function update(t) { t.updated = Date.now(); const ts = list(); const k = ts.findIndex(x => x.id === t.id); if (k >= 0) ts[k] = t; else ts.push(t); saveAll(ts); }
+function update(t) { t.updated = Date.now(); const ts = list(); const k = ts.findIndex(x => x.id === t.id); if (k >= 0) ts[k] = t; else ts.push(t); return saveAll(ts); }
 
 /* ---------- Results ---------- */
 const outcome = fixtureOutcome;
@@ -952,19 +952,22 @@ function tournamentForm(t) {
     if (x.dataset.x === 'cancel') { closeModal(); return; }
     if (x.dataset.x === 'indnz') {
       const nt = indNzTemplate();
-      update(nt); store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
+      if (!update(nt)) return; // storage full: the warning is showing
+      store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
       toast('India tour of New Zealand 2026 created');
       return;
     }
     if (x.dataset.x === 'cwc23') {
       const nt = cwc23Template();
-      update(nt); store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
+      if (!update(nt)) return; // storage full: the warning is showing
+      store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
       toast('ICC Men\'s Cricket World Cup 2023 created');
       return;
     }
     if (x.dataset.x === 'wtc') {
       const nt = wtcTemplate();
-      update(nt); store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
+      if (!update(nt)) return; // storage full: the warning is showing
+      store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
       toast('World Test Championship 2025–27 created');
       return;
     }
@@ -975,7 +978,8 @@ function tournamentForm(t) {
       if (!name) { err.textContent = 'Give the tour a name.'; return; }
       if (tl.length !== 2 || same(tl[0], tl[1])) { err.textContent = 'A tour has two teams: the home side on the first line, the visitors on the second.'; return; }
       const nt = blankTour(name, tl[0], tl[1]);
-      update(nt); store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
+      if (!update(nt)) return; // storage full: the warning is showing
+      store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
       toast('Tour created. Add its series next.');
       return;
     }
@@ -986,7 +990,8 @@ function tournamentForm(t) {
       const dup2 = tl.find((n, k) => tl.findIndex(y => same(y, n)) !== k);
       if (dup2) { err.textContent = `“${dup2}” is listed twice.`; return; }
       const nt = blankTestTour(name, tl);
-      update(nt); store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
+      if (!update(nt)) return; // storage full: the warning is showing
+      store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
       toast('Championship created. Add the series next.');
       return;
     }

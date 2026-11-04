@@ -20,9 +20,26 @@ export const reduceMotion = typeof window !== 'undefined' && !!(window.matchMedi
 export const FONT = "'Figtree', system-ui, sans-serif";
 export const EPS = 1e-9;
 
+// Copies the app can do without (undo history, recent copies of the live match). When storage is full they are
+// cleared to make room, so the live match, saved matches and tournaments are always written first.
+const SPARE = ['liveUndo', 'liveSnaps'];
 export const store = {
   get(k, d) { try { const v = localStorage.getItem('crease.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem('crease.' + k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
+  // Returns false when the value couldn't be saved (storage full or blocked), and tells the app so it can say so.
+  set(k, v) {
+    let s;
+    try { s = JSON.stringify(v); } catch { return false; }
+    for (;;) {
+      try { localStorage.setItem('crease.' + k, s); return true; } catch { /* full, or storage blocked */ }
+      let drop = null;
+      try { drop = SPARE.find(x => x !== k && localStorage.getItem('crease.' + x) != null); } catch { /* blocked */ }
+      if (!drop) {
+        if (!SPARE.includes(k)) { try { window.dispatchEvent(new CustomEvent('crease:storage-full', { detail: k })); } catch { /* no window */ } }
+        return false;
+      }
+      try { localStorage.removeItem('crease.' + drop); } catch { return false; }
+    }
+  },
   del(k) { try { localStorage.removeItem('crease.' + k); } catch { /* ignore */ } },
 };
 
@@ -34,4 +51,3 @@ export function deepMerge(a, b) {
   }
   return out;
 }
-

@@ -45,8 +45,8 @@ function updateStatus() {
     return;
   }
   el.textContent = last
-    ? `Last backup: ${when(last)}. This browser now holds ${what}.`
-    : `No backup yet. This browser holds ${what}, and nothing else has a copy.`;
+      ? `Last backup: ${when(last)}. This browser now holds ${what}.`
+      : `No backup yet. This browser holds ${what}, and nothing else has a copy.`;
 }
 
 function backupNow() {
@@ -156,8 +156,8 @@ function restoreDialog() {
       mode = m.dataset.mode;
       body.querySelectorAll('[data-mode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === mode)));
       $('#rs-mode-note', body).textContent = mode === 'merge'
-        ? 'Adds the backup\'s players, matches, squads, tournaments and earlier stats. Where both have the same one, the newer copy wins. Your settings stay as they are.'
-        : 'Deletes everything Crease keeps in this browser, including any match in progress, and puts the backup in its place.';
+          ? 'Adds the backup\'s players, matches, squads, tournaments and earlier stats. Where both have the same one, the newer copy wins. Your settings stay as they are.'
+          : 'Deletes everything Crease keeps in this browser, including any match in progress, and puts the backup in its place.';
       ok.className = 'btn' + (mode === 'replace' ? ' solid-danger' : '');
       ok.textContent = mode === 'replace' ? 'Replace everything' : 'Restore';
     }
@@ -211,5 +211,15 @@ function nudge({ onLoad = false } = {}) {
   bar.hidden = false;
   store.set('nudgeShown', Date.now());
 }
+// Storage full: the last change couldn't be saved. Say so once per visit, with a way to make room.
+let fullShown = false;
+window.addEventListener('crease:storage-full', () => {
+  if (fullShown) { toast('Storage is full: that change wasn\'t saved'); return; }
+  fullShown = true;
+  const body = openModal('Storage is full', `
+    <p style="margin:0 0 12px;color:var(--fg-2)">This browser's storage for Crease is full, so the last change wasn't saved. Back up everything first, then make room by deleting saved matches you no longer need (Saved tab) or old tournaments, and try again.</p>
+    <div class="modal-actions"><button type="button" class="btn ghost" data-x="close">Close</button><button type="button" class="btn" data-x="backup">Back up now</button></div>`);
+  body.addEventListener('click', e => { const x = e.target.closest('[data-x]'); if (!x) return; closeModal(); if (x.dataset.x === 'backup') backupNow(); });
+});
 matchHooks.done.push(() => { setTimeout(() => nudge(), 2800); }); // after the "match saved" toast
 setTimeout(() => nudge({ onLoad: true }), 3000);
