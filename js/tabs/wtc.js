@@ -359,8 +359,10 @@ function testStats(t, byId, sid = '') {
                 inns.push({ name: b.name, team: bt, opp: bw, r: b.runs, b: b.balls, out: !!b.out });
                 const dis = b.dis;
                 if (b.out && dis && dis.fielder && ['caught', 'stumped', 'run out'].includes(dis.how)) {
-                    const fx = get(bw, dis.fielder.trim()); fx.tests.add(f.id);
-                    if (dis.how === 'caught') fx.ct++; else if (dis.how === 'stumped') fx.st++; else fx.ro++;
+                    dis.fielder.split('/').map(x => x.trim()).filter(x => x && !/^sub(stitute)?\b/i.test(x)).forEach(nm => {
+                        const fx = get(bw, nm); fx.tests.add(f.id);
+                        if (dis.how === 'caught') fx.ct++; else if (dis.how === 'stumped') fx.st++; else fx.ro++;
+                    });
                 }
             });
             i.bowlers.forEach(b => {

@@ -67,13 +67,15 @@ export function buildRecords(matches = finishedMatches(), { includeBase = true, 
         g.bat = { r: b.runs, b: b.balls, out: !!b.out };
         if (b.out) {
           const dis = parseDismissal(b);
-          const f = dis.fielder && !SKIP_FIELDERS.has(nameKey(dis.fielder)) && !/^sub(stitute)?\b/i.test(dis.fielder) ? get(dis.fielder, fldTeam) : null; // substitutes aren't in the squad
-          if (f) {
+          // A run out can name two fielders, "A/B": each gets the credit. Substitutes aren't in the squad.
+          String(dis.fielder || '').split('/').map(x => x.trim()).filter(x => x && !SKIP_FIELDERS.has(nameKey(x)) && !/^sub(stitute)?\b/i.test(x)).forEach(nm => {
+            const f = get(nm, fldTeam);
+            if (!f) return;
             const gf = line(f);
             if (dis.how === 'caught') { f.field.ct++; gf.ct++; }
             else if (dis.how === 'stumped') { f.field.st++; gf.st++; }
             else if (dis.how === 'run out') { f.field.ro++; gf.ro++; }
-          }
+          });
           if (dis.bowler && dis.how !== 'run out') {
             const bw = get(dis.bowler, fldTeam);
             bw.bowl.types[['bowled', 'caught', 'lbw', 'stumped'].includes(dis.how) ? dis.how : 'other']++;

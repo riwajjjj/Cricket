@@ -829,7 +829,7 @@ function renamePlayer(team, old, nm) {
       inn.batters.forEach(bt => {
         if (!bt.out) return;
         bt.how = swap(bt.how, old, nm);
-        if (bt.dis) { if (bt.dis.bowler && sameName(bt.dis.bowler, old)) bt.dis.bowler = nm; if (bt.dis.fielder && sameName(bt.dis.fielder, old)) bt.dis.fielder = nm; }
+        if (bt.dis) { if (bt.dis.bowler && sameName(bt.dis.bowler, old)) bt.dis.bowler = nm; if (bt.dis.fielder) bt.dis.fielder = bt.dis.fielder.split('/').map(x => (sameName(x.trim(), old) ? nm : x.trim())).join('/'); }
       });
     }
   });
@@ -2521,12 +2521,12 @@ function batterNameField(i, id, label) {
     <datalist id="${id}-list">${back.map(b => `<option value="${esc(b.name)}"></option>`).join('')}</datalist>
     ${back.length ? `<p class="hint" style="grid-column:1/-1;margin:0">Type ${back.map(b => esc(b.name)).join(' or ')} to bring a retired batter back in.</p>` : ''}`;
 }
-function fielderField(i) {
+function fielderField(i, id = 'wk-fielder', label = 'Fielder') {
   const fsq = playersOf(live, 1 - i.bat);
-  if (!fsq) return `<div class="lab"><label for="wk-fielder">Fielder</label></div><input id="wk-fielder" type="text" maxlength="30" autocomplete="off" placeholder="Optional">`;
+  if (!fsq) return `<div class="lab"><label for="${id}">${label}</label></div><input id="${id}" type="text" maxlength="30" autocomplete="off" placeholder="Optional">`;
   const bowler = i.bowlers[i.bowler]?.name;
   const opts = [{ v: '', l: 'Not recorded' }, ...fsq.map(n => ({ v: n, l: n + roleTag(live, 1 - i.bat, n) + (bowler && sameName(n, bowler) ? ' (bowler)' : '') })), { v: 'sub', l: 'Substitute fielder' }];
-  return selectField('wk-fielder', 'Fielder', opts, '').replace(/^<div class="field">|<\/div>$/g, '') + '<input id="wk-sub" type="text" maxlength="30" autocomplete="off" placeholder="Substitute\'s name (optional)" aria-label="Substitute fielder\'s name" style="margin-top:8px" hidden>';
+  return selectField(id, label, opts, '').replace(/^<div class="field">|<\/div>$/g, '') + (id === 'wk-fielder' ? '<input id="wk-sub" type="text" maxlength="30" autocomplete="off" placeholder="Substitute\'s name (optional)" aria-label="Substitute fielder\'s name" style="margin-top:8px" hidden>' : '');
 }
 const TYPES = { fair: ['bowled', 'caught', 'lbw', 'stumped', 'hit wicket', 'run out'], wd: ['stumped', 'hit wicket', 'run out'], nb: ['run out'] };
 const typeLabel = t => t === 'lbw' ? 'LBW' : t[0].toUpperCase() + t.slice(1);
@@ -2555,6 +2555,7 @@ export function wicketModal() {
     </div>
     <div class="fields one">
       <div class="field" id="wk-f-wrap">${fielderField(i)}</div>
+      <div class="field" id="wk-f2-wrap" hidden>${fielderField(i, 'wk-fielder2', 'Second fielder (optional)')}</div>
       ${last ? '' : batterNameField(i, 'wk-new', 'New batter')}
     </div>
     ${canImp ? `<div id="wk-imp" class="fields one" hidden>${selectField('wk-imp-out', 'Impact player replaces', [{ v: '', l: '' }], '')}${impactInHTML(i.bat, 'wk-ip')}</div>
@@ -2572,6 +2573,7 @@ export function wicketModal() {
     $('#wk-r').hidden = how !== 'run out';
     $('#wk-r-lbl').textContent = ball === 'wd' ? 'Runs completed (added as wides)' : ball === 'nb' ? 'Runs completed (credited to the batter)' : 'Runs completed before the run out';
     $('#wk-f-wrap').hidden = !['caught', 'stumped', 'run out'].includes(how);
+    $('#wk-f2-wrap').hidden = how !== 'run out';
     const fs = $('#wk-fielder');
     const keeper = live.keepers?.[1 - i.bat];
     if (fs && fs.tagName === 'SELECT' && keeper) { // stumpings default to the keeper
@@ -2616,6 +2618,10 @@ export function wicketModal() {
       const takesRuns = how === 'run out';
       let fielder = $('#wk-fielder')?.value || '';
       if (fielder === 'sub') { const sn = ($('#wk-sub', body)?.value || '').replace(/[()]/g, ' ').trim().replace(/\s+/g, ' '); fielder = sn ? `sub (${sn})` : 'sub'; } // a substitute can be named
+      if (how === 'run out') { // two fielders: the thrower, then the one who broke the stumps, as "A/B"
+        const f2 = ($('#wk-fielder2')?.value || '').replace(/[()/]/g, ' ').trim().replace(/\s+/g, ' ');
+        if (f2 && f2 !== 'sub' && !sameName(f2, fielder)) fielder = fielder ? `${fielder}/${f2}` : f2;
+      }
       const ev = { type: 'wkt', ball, how, outWho: how === 'run out' ? who : 'striker', runs: takesRuns ? runs : 0, fielder, newBatter: $('#wk-new')?.value || '' };
       if (impOn()) {
         const nm = impactInVal(body, 'wk-ip'), out = $('#wk-imp-out', body)?.value;

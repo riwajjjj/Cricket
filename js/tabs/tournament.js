@@ -290,7 +290,7 @@ function matchFigures(t, f, byId) {
   const phT = team => ph[team] || (ph[team] = { bat: blankPh(), bowl: blankPh() });
   const fielding = (b, fldTeam) => {
     const d = parseDismissal(b);
-    if (d.fielder && !/^sub(stitute)?\b/i.test(d.fielder) && ['caught', 'stumped', 'run out'].includes(d.how)) { const q = get(d.fielder, fldTeam); if (q) q.fd++; }
+    if (d.fielder && ['caught', 'stumped', 'run out'].includes(d.how)) d.fielder.split('/').map(x => x.trim()).filter(x => x && !/^sub(stitute)?\b/i.test(x)).forEach(nm => { const q = get(nm, fldTeam); if (q) q.fd++; });
   };
   // overs: [{ b: bowler index, r: runs, br: runs off the bowler, w: wickets, l: legal balls }]
   const addOvers = (bt, ft, overs, nameOf, Bi = O * 6) => { // Bi: balls this innings was cut to, so a shortened innings has its own powerplay and death overs
