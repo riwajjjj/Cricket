@@ -156,6 +156,7 @@ function runEntry(e) {
     case 'bowler': return coreBowler(e.name);
     case 'relieve': return coreRelieve(e.name, e.bar);
     case 'xball': return coreXball();
+    case 'short': return coreShortOver();
     case 'swap': return coreSwap();
     case 'retire': return coreRetire(e.who, e.name);
     case 'pen': return corePenalty(e.bat);
@@ -417,6 +418,7 @@ function commentAction(e, before) {
   const i = cur();
   switch (e.t) {
     case 'adjust': say('event', `Scorecard figures corrected (${e.inn < live.inns.length ? innName(live, e.inn) : 'an innings'})`); break;
+    case 'short': { const ov = [...i.overs].reverse().find(x => x.short); if (ov) { say('event', `The umpires end over ${i.balls / 6} after ${plural(6 - ov.short, 'ball')}, a miscount. It counts as a full over`); commentOver(i, ov, i.bowlers[i.bowler]); } break; }
     case 'xball': say('event', `The umpire allows an extra ball in over ${i.balls / 6}, a miscount`); break;
     case 'relieve': say('event', `${i.bowlers[i.bowler].name} takes over from ${before.bowlerNow || 'the bowler'} to bowl the rest of the over${e.bar ? `. ${before.bowlerNow || 'The bowler'} can't bowl again this innings` : ''}`); break;
     case 'bowler': {
@@ -1417,6 +1419,20 @@ function canBowlAnother(i, k) {
   return { ok: false, max: base + (spare ? 1 : 0), base, spare };
 }
 const capText = c => c.spare && c.max > c.base ? `${plural(c.base, 'over')} (only ${c.spare === 1 ? 'one bowler' : plural(c.spare, 'bowler')} can bowl ${c.max})` : plural(c.base, 'over');
+// The umpire miscounts and ends an over after five balls (or fewer). The over counts as a whole over in the innings
+// total (so 13.5 becomes 14.0, as the official scorecard has it) but the bowler is only charged the balls he bowled.
+function coreShortOver() {
+  const i = cur();
+  const over = i.overs[i.overs.length - 1];
+  if (live.status !== 'live' || i.needBowler || i.xball || !over || over.legal < 1 || over.legal > 5) return 'there was no part-played over to close';
+  over.short = 6 - over.legal;
+  i.balls += over.short;
+  const t = i.striker; i.striker = i.non; i.non = t; // the batters change ends, as at the end of any over
+  const cap = maxBallsOf(i);
+  if (cap != null && i.balls >= cap) endInnings('overs');
+  else { i.lastBowler = i.bowler; i.needBowler = true; }
+  return null;
+}
 // The umpire miscounts and lets a seventh ball be bowled. The over that just ended opens again for one more ball,
 // from the same bowler to the same batter; it doesn't count in the overs or the bowler's balls.
 function coreXball() {
@@ -1874,6 +1890,7 @@ export function liveHTML(animateLast) {
             ${live.overs && !isTest() && !i.so ? '<button type="button" class="btn ghost sm" data-act="rain">Rain / stoppage</button>' : ''}
             <button type="button" class="btn ghost sm" data-act="rename">Edit names</button>
             <button type="button" class="btn ghost sm" data-act="relieve">Change bowler</button>
+            ${over.legal >= 1 && over.legal <= 5 && !i.xball ? '<button type="button" class="btn ghost sm" data-act="short">End over early</button>' : ''}
             ${canEdit() ? '<button type="button" class="btn ghost sm" data-act="goback">Go back to an over</button>' : ''}
             <button type="button" class="btn ghost sm" data-act="save-file">Save match file</button>
             <button type="button" class="btn ghost sm danger" data-act="end-inn">${isTest() ? 'Declare' : 'End innings'}</button>
@@ -2812,6 +2829,7 @@ export async function liveAction(action, el) {
     case 'goback': goBackModal(); break;
     case 'relieve': relieveModal(); break;
     case 'xball': act({ t: 'xball' }, coreXball); break;
+    case 'short': if (await confirmBox('End this over early?', 'Use this when the umpires miscounted and ended the over after fewer than six balls. The over counts as a whole over in the innings, but the bowler is only charged the balls he bowled. You can undo it.', 'End the over')) act({ t: 'short' }, coreShortOver); break;
     case 'save-file': saveFileModal(); break;
     case 'open-file': openFileModal(); break;
     case 'figs': editFigures(Number(el.dataset.k)); break;
