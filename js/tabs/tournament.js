@@ -10,6 +10,7 @@ import { $, $$, esc, nf, plural, store, uid } from '../utils.js';
 import { clearLive, live, matchHooks, openScorecard, setupFromFixture } from './live.js';
 import { loadNRR } from './nrr.js';
 import { saveMatch } from './saved.js';
+import { cwc23Template, cwc23Venues } from './cwc.js';
 import { blankTestTour, isTestTour, renderTestTour, testTourAction, testTourForm, wtcTemplate } from './wtc.js';
 import { blankTour, indNzTemplate, isTour, legOf, matchName, renderTour, tourAction, tourForm, tourMatchSetup } from './tour.js';
 
@@ -47,6 +48,10 @@ function koWinner(t, f, byId) {
 // A knockout slot filled from an earlier match: "SF1" or "W:Q1" is that match's winner, "L:Q1" its loser.
 function fromRef(t, ref, byId) {
   const [take, s] = ref.includes(':') ? ref.split(':') : ['W', ref];
+  if (take === 'P') { // a place in the final table, once every league match is done
+    if (t.fixtures.some(f => !f.stage && f.a && f.b && !isPlayed(f))) return null;
+    return table(t)[Number(s) - 1]?.team || null;
+  }
   const f = t.fixtures.find(x => x.stage === s);
   const team = f && koWinner(t, f, byId)?.team;
   if (!team) return null;
@@ -61,9 +66,12 @@ function syncFinal(t, byId) {
     if (!f || isPlayed(f)) return;
     const [a, b] = f.from.map(r => fromRef(t, r, byId));
     if (f.a === a && f.b === b) return;
-    f.a = a; f.b = b; f.seedA = a ? seedOf(a) : null; f.seedB = b ? seedOf(b) : null;
+    const fixed = f.from.every(r => r.startsWith('P:')); // seeds from table places stay as they are
+    f.a = a; f.b = b;
+    if (!fixed) { f.seedA = a ? seedOf(a) : null; f.seedB = b ? seedOf(b) : null; }
     changed = true;
   });
+  if (cwc23Venues(t)) changed = true;
   return changed;
 }
 
@@ -701,7 +709,7 @@ function fxRow(t, f, label, byId, caption = '') {
   const o = known ? outcome(t, f, byId) : null;
   const pending = live && live.tournament && live.tournament.tid === t.id && live.tournament.fid === f.id && live.status !== 'done';
   let status, actions = '';
-  if (!known) status = '<span class="dim">Waiting for earlier knockout results</span>';
+  if (!known) status = `<span class="dim">${f.from?.some(r => r.startsWith('P:')) ? 'Decided by the final league table' : 'Waiting for earlier knockout results'}</span>`;
   else if (o && !o.error) {
     const tie = !o.nr && !o.winner;
     const soTxt = o.so ? ` · ${esc(o.so === 'a' ? f.a : f.b)} won the super over` : '';
@@ -906,8 +914,8 @@ RENDER.tournament = function renderTournament() {
 function tournamentForm(t) {
   const body = openModal(t ? 'Edit tournament' : 'New tournament', `
     ${t ? '' : `<div class="tf-tpl"><p class="modal-sub" style="margin:0 0 8px">Start from a real one</p>
-      <div class="modal-actions" style="justify-content:flex-start;margin:0"><button type="button" class="btn ghost" data-x="wtc" style="white-space:normal;height:auto;min-height:40px;text-align:left">ICC World Test Championship 2025–27</button><button type="button" class="btn ghost" data-x="indnz" style="white-space:normal;height:auto;min-height:40px;text-align:left">India tour of New Zealand 2026</button></div>
-      <p class="hint" style="margin:6px 0 0">The WTC: all nine teams, the 27 series (71 Tests) with dates and grounds, the percentage table, over-rate penalties and the final at The Oval. The tour: 5 T20Is, 5 ODIs and 2 Tests with dates and grounds; the Tests also count in the WTC.</p></div>
+      <div class="modal-actions" style="justify-content:flex-start;margin:0"><button type="button" class="btn ghost" data-x="wtc" style="white-space:normal;height:auto;min-height:40px;text-align:left">ICC World Test Championship 2025–27</button><button type="button" class="btn ghost" data-x="indnz" style="white-space:normal;height:auto;min-height:40px;text-align:left">India tour of New Zealand 2026</button><button type="button" class="btn ghost" data-x="cwc23" style="white-space:normal;height:auto;min-height:40px;text-align:left">ICC Men's Cricket World Cup 2023</button></div>
+      <p class="hint" style="margin:6px 0 0">The WTC: all nine teams, the 27 series (71 Tests) with dates and grounds, the percentage table, over-rate penalties and the final at The Oval. The tour: 5 T20Is, 5 ODIs and 2 Tests with dates and grounds; the Tests also count in the WTC. The 2023 World Cup: ten teams, all 45 league matches with dates and grounds, 50 overs a side, and the semi-finals and final, filled in from the table.</p></div>
     <div class="fields" style="margin-top:14px"><div class="field wide"><div class="lab"><label for="tf-kind">Or make your own</label></div><select id="tf-kind"><option value="league">Limited-overs league</option><option value="test">Test championship (like the WTC)</option><option value="tour">Bilateral tour (T20Is, ODIs and Tests)</option></select></div></div>`}
     <div class="fields">
       <div class="field wide"><div class="lab"><label for="tf-name">Name</label></div><input id="tf-name" type="text" maxlength="50" autocomplete="off" value="${esc(t?.name || '')}" placeholder="e.g. Valley Premier League 2026"></div>
@@ -946,6 +954,12 @@ function tournamentForm(t) {
       const nt = indNzTemplate();
       update(nt); store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
       toast('India tour of New Zealand 2026 created');
+      return;
+    }
+    if (x.dataset.x === 'cwc23') {
+      const nt = cwc23Template();
+      update(nt); store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
+      toast('ICC Men\'s Cricket World Cup 2023 created');
       return;
     }
     if (x.dataset.x === 'wtc') {
