@@ -155,6 +155,7 @@ function runEntry(e) {
     case 'ball': return coreBall(e.ev);
     case 'bowler': return coreBowler(e.name);
     case 'relieve': return coreRelieve(e.name, e.bar);
+    case 'keeper': return coreKeeper(e.team, e.name);
     case 'xball': return coreXball();
     case 'short': return coreShortOver();
     case 'swap': return coreSwap();
@@ -421,6 +422,7 @@ function commentAction(e, before) {
     case 'short': { const ov = [...i.overs].reverse().find(x => x.short); if (ov) { say('event', `The umpires end over ${i.balls / 6} after ${plural(6 - ov.short, 'ball')}, a miscount. It counts as a full over`); commentOver(i, ov, i.bowlers[i.bowler]); } break; }
     case 'xball': say('event', `The umpire allows an extra ball in over ${i.balls / 6}, a miscount`); break;
     case 'relieve': say('event', `${i.bowlers[i.bowler].name} takes over from ${before.bowlerNow || 'the bowler'} to bowl the rest of the over${e.bar ? `. ${before.bowlerNow || 'The bowler'} can't bowl again this innings` : ''}`); break;
+    case 'keeper': say('event', `${live.keepers[e.team]} takes the gloves for ${live.teams[e.team]}`); break;
     case 'bowler': {
       const b = i.bowlers[i.bowler];
       if (b && b.balls === 0 && !before.bowlers.includes(b.name.toLowerCase())) say('event', `${b.name} comes into the attack`);
@@ -1447,6 +1449,38 @@ function coreXball() {
 // A bowler can't finish the over (an injury, say): someone else bowls the rest of it from the same end. The new
 // bowler can't be the one who bowled the over before, and can't bowl the next over either (that is the usual
 // no-two-in-a-row rule, since the over he finishes is his). With `bar`, the first bowler can't bowl again this innings.
+// A new wicketkeeper for the fielding side (the keeper was injured, or a fielder took the gloves).
+function coreKeeper(team, name) {
+  const nm = (name || '').trim().replace(/\s+/g, ' ');
+  if (live.status !== 'live') return 'the match is not in progress';
+  if (!nm) return 'Pick the new keeper.';
+  const sq = playersOf(live, team);
+  const hit = sq && sq.find(n => sameName(n, nm));
+  if (sq && !hit) return `${nm} isn't in the squad.`;
+  const cur = live.keepers?.[team];
+  if (cur && sameName(cur, nm)) return `${cur} is already keeping.`;
+  (live.keepers = live.keepers || [null, null])[team] = hit || nm;
+  return null;
+}
+function keeperModal() {
+  if (!live || live.status !== 'live') return;
+  const team = 1 - cur().bat, sq = playersOf(live, team), now = live.keepers?.[team];
+  const body = openModal('Change wicketkeeper', `
+    <p style="margin:0 0 12px;color:var(--fg-2)">${esc(live.teams[team])} ${now ? `are keeping with ${esc(now)}` : 'have no keeper set'}. Stumpings from now on default to the new keeper. Earlier stumpings stay as they were.</p>
+    ${sq ? selectField('kp-name', 'New keeper', sq.filter(n => !now || !sameName(n, now)).map(n => ({ v: n, l: n })), '') : '<div class="field"><div class="lab"><label for="kp-name">New keeper</label></div><input id="kp-name" type="text" maxlength="30" autocomplete="off"></div>'}
+    <p class="err-text" id="kp-err"></p>
+    <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Change keeper</button></div>`);
+  body.addEventListener('click', e => {
+    const x = e.target.closest('[data-x]');
+    if (!x) return;
+    if (x.dataset.x === 'ok') {
+      const name = $('#kp-name', body)?.value;
+      const err = act({ t: 'keeper', team, name }, () => coreKeeper(team, name));
+      if (err) { $('#kp-err', body).textContent = `Can't change: ${err.replace(/\.$/, '')}.`; return; }
+    }
+    closeModal();
+  });
+}
 function coreRelieve(name, bar) {
   const i = cur();
   const nm = (name || '').trim();
@@ -1890,6 +1924,7 @@ export function liveHTML(animateLast) {
             ${live.overs && !isTest() && !i.so ? '<button type="button" class="btn ghost sm" data-act="rain">Rain / stoppage</button>' : ''}
             <button type="button" class="btn ghost sm" data-act="rename">Edit names</button>
             <button type="button" class="btn ghost sm" data-act="relieve">Change bowler</button>
+            <button type="button" class="btn ghost sm" data-act="keeper">Change keeper</button>
             ${over.legal >= 1 && over.legal <= 5 && !i.xball ? '<button type="button" class="btn ghost sm" data-act="short">End over early</button>' : ''}
             ${canEdit() ? '<button type="button" class="btn ghost sm" data-act="goback">Go back to an over</button>' : ''}
             <button type="button" class="btn ghost sm" data-act="save-file">Save match file</button>
@@ -2834,6 +2869,7 @@ export async function liveAction(action, el) {
     case 'undo': undo(); break;
     case 'goback': goBackModal(); break;
     case 'relieve': relieveModal(); break;
+    case 'keeper': keeperModal(); break;
     case 'xball': act({ t: 'xball' }, coreXball); break;
     case 'short': if (await confirmBox('End this over early?', 'Use this when the umpires miscounted and ended the over after fewer than six balls. The over counts as a whole over in the innings, but the bowler is only charged the balls he bowled. You can undo it.', 'End the over')) act({ t: 'short' }, coreShortOver); break;
     case 'save-file': saveFileModal(); break;
