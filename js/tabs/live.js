@@ -83,6 +83,13 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 // Economy cut to two decimals, not rounded, as scorecards show it (86 off 29.4 overs is 2.89, not 2.90).
 const econOf = b => Math.floor(b.runs * 600 / b.balls) / 100;
 export const howOf = b => (b.out || b.retired) ? b.how : 'not out';
+// The dismissal as shown on a scorecard: a catch or stumping by the fielding side's keeper gets the † even when it
+// was scored before the mark existed. Text typed in by hand (Edit figures) is shown as typed.
+export const howShown = (m, i, k, b) => {
+  const h = howOf(b), d = b.dis;
+  if (!b.out || !d || (d.how !== 'caught' && d.how !== 'stumped') || !d.fielder || h.includes('†') || h !== dismissalText(d.how, d.bowler, d.fielder)) return h;
+  return dismissalText(d.how, d.bowler, d.fielder, keeperOf(m, 1 - i.bat, k));
+};
 const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Who can still come in: unused players, or a retired batter returning.
 // Squads: optional named lists per team, in batting order. Players per side follows the squad size.
@@ -2212,7 +2219,7 @@ export function scorecardHTML(m, idx) {
   const rr = i.balls ? nf(i.runs / (i.balls / 6)) : '—';
   const bats = i.batters.map((b, k) => {
     const atCrease = isCur && (k === i.striker || k === i.non);
-    const how = howOf(b);
+    const how = howShown(m, i, idx, b);
     return `<tr><td>${esc(b.name + roleTag(m, i.bat, b.name, idx))}${atCrease && k === i.striker ? ' *' : ''}</td><td class="dismissal">${esc(how)}</td><td class="num"><b>${b.runs}</b></td><td class="num">${b.balls}</td><td class="num">${b.f4}</td><td class="num">${b.f6}</td><td class="num">${b.balls ? nf(b.runs / b.balls * 100, 1) : '—'}</td></tr>`;
   }).join('');
   const bowls = i.bowlers.filter(b => b.balls || b.runs).map(b => `<tr><td>${esc(b.name + roleTag(m, 1 - i.bat, b.name, idx))}</td><td class="num">${fmtOvers(b.balls)}</td><td class="num">${b.maidens}</td><td class="num">${b.runs}</td><td class="num"><b>${b.wkts}</b></td><td class="num">${b.balls ? nf(econOf(b)) : '—'}</td><td class="num">${b.dots}</td><td class="num">${b.wd}/${b.nb}</td></tr>`).join('');
@@ -3004,7 +3011,7 @@ export function scorecardCSV(m) {
   m.inns.forEach((i, k) => {
     rows.push([`${m.teams[i.bat]} ${innName(m, k)}`, `${i.runs}/${i.wkts}`, `${fmtOvers(i.balls)} overs`]);
     rows.push(['Batter', 'Dismissal', 'Runs', 'Balls', '4s', '6s', 'SR']);
-    i.batters.forEach(b => rows.push([b.name + roleTag(m, i.bat, b.name, k), howOf(b), b.runs, b.balls, b.f4, b.f6, b.balls ? fx(b.runs / b.balls * 100) : '']));
+    i.batters.forEach(b => rows.push([b.name + roleTag(m, i.bat, b.name, k), howShown(m, i, k, b), b.runs, b.balls, b.f4, b.f6, b.balls ? fx(b.runs / b.balls * 100) : '']));
     rows.push(['Extras', `b ${i.extras.b}, lb ${i.extras.lb}, w ${i.extras.wd}, nb ${i.extras.nb}${i.extras.pen ? `, pen ${i.extras.pen}` : ''}`]);
     rows.push(['Bowler', 'Overs', 'Maidens', 'Runs', 'Wickets', 'Econ', 'Dots']);
     i.bowlers.filter(b => b.balls || b.runs).forEach(b => rows.push([b.name + roleTag(m, 1 - i.bat, b.name, k), fmtOvers(b.balls), b.maidens, b.runs, b.wkts, b.balls ? fx(econOf(b)) : '', b.dots]));
@@ -3218,7 +3225,7 @@ export async function scorecardImage(m) {
         y += 34; x._y = y;
         x.fillStyle = 'rgba(255,255,255,0.05)'; x.fillRect(P, y - 25, W - 2 * P, 1);
         x.fillStyle = '#e8f0eb'; x.font = `600 20px ${B}`; x.fillText(fitText(x, b.name + roleTag(m, i.bat, b.name, k), 285), P, y);
-        x.fillStyle = '#8ea398'; x.font = `400 18px ${B}`; x.fillText(fitText(x, howOf(b), 470), P + 300, y);
+        x.fillStyle = '#8ea398'; x.font = `400 18px ${B}`; x.fillText(fitText(x, howShown(m, i, k, b), 470), P + 300, y);
         x.font = `600 20px ${B}`; x.fillStyle = '#ffffff'; num(x, b.runs, 840);
         x.fillStyle = '#c3d1c9'; [b.balls, b.f4, b.f6, b.balls ? nf(b.runs / b.balls * 100, 1) : '—'].forEach((v, j) => num(x, v, cols[j + 1][1]));
       });
