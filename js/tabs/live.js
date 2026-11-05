@@ -1594,7 +1594,7 @@ const parseSquadFull = text => {
 };
 const parseSquad = text => parseSquadFull(text).names;
 const markRoles = (names, keeper, captain) => names.map(n => n + (captain && sameName(n, captain) ? ' (c)' : '') + (keeper && sameName(n, keeper) ? ' (wk)' : ''));
-// " (c)", " (wk)" or " (c, wk)" after a player's name, for the given team.
+// " (c)", "†" or " (c)†" after a player's name, for the given team.
 // The keeper in force for a team: the one picked at the start, then any changed during the match. For a
 // scorecard pass the innings number: a change made in a later innings doesn't touch an earlier innings' card.
 export const keeperOf = (m, team, inn = Infinity) => {
@@ -1603,11 +1603,10 @@ export const keeperOf = (m, team, inn = Infinity) => {
 };
 export const roleTag = (m, team, name, inn) => {
   if (!m || !name) return '';
-  const r = [];
-  if (m.captains?.[team] && sameName(m.captains[team], name)) r.push('c');
+  // "(c)" for the captain and a † after the name for the wicketkeeper: "Jos Buttler (c)†".
+  const cap = m.captains?.[team] && sameName(m.captains[team], name);
   const kp = keeperOf(m, team, inn);
-  if (kp && sameName(kp, name)) r.push('wk');
-  return r.length ? ` (${r.join(', ')})` : '';
+  return (cap ? ' (c)' : '') + (kp && sameName(kp, name) ? '†' : '');
 };
 const FOLLOW_ON = { 5: 200, 4: 150, 3: 150, 2: 100, 1: 75 }; // Laws of Cricket 14.1
 // Set when a tournament fixture is scored. Kept in storage, so a reload (an app update, say) between
