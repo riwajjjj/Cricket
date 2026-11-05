@@ -112,11 +112,13 @@ function bringIn(i, name) {
   return i.batters.length - 1;
 }
 
-export function dismissalText(how, bowler, fielder) {
-  const fd = (fielder || '').trim();
+// A † marks the wicketkeeper in a catch or stumping, as in "c †Latham b Henry". Pass the fielding side's keeper.
+export function dismissalText(how, bowler, fielder, keeper) {
+  const fd0 = (fielder || '').trim();
+  const fd = keeper && fd0 && fd0.toLowerCase() === String(keeper).trim().toLowerCase() && !(how === 'caught' && fd0.toLowerCase() === bowler.toLowerCase()) && (how === 'caught' || how === 'stumped') ? '†' + fd0 : fd0;
   switch (how) {
     case 'bowled': return `b ${bowler}`;
-    case 'caught': return fd && fd.toLowerCase() === bowler.toLowerCase() ? `c & b ${bowler}` : `c ${fd || 'fielder'} b ${bowler}`;
+    case 'caught': return fd0 && fd0.toLowerCase() === bowler.toLowerCase() ? `c & b ${bowler}` : `c ${fd || 'fielder'} b ${bowler}`;
     case 'lbw': return `lbw b ${bowler}`;
     case 'stumped': return `st ${fd || 'keeper'} b ${bowler}`;
     case 'hit wicket': return `hit wicket b ${bowler}`;
@@ -318,7 +320,7 @@ function coreBall(ev) {
     const outIdx = ev.how === 'run out' && ev.outWho === 'non' ? nonBefore : strikerBefore;
     const ob = i.batters[outIdx];
     ob.out = true;
-    ob.how = dismissalText(ev.how, bw.name, ev.fielder);
+    ob.how = dismissalText(ev.how, bw.name, ev.fielder, keeperOf(live, 1 - i.bat));
     ob.dis = { how: ev.how, bowler: ev.how === 'run out' ? '' : bw.name, fielder: (ev.fielder || '').trim() };
     i.wkts++; over.wkts++;
     i.fow.push({ score: i.runs, wkt: i.wkts, name: ob.name, over: fmtOvers(i.balls) });

@@ -23,8 +23,8 @@ export function parseDismissal(b) {
   const h = String(b.how || '');
   let m;
   if ((m = h.match(/^c & b (.+)$/))) return { how: 'caught', bowler: m[1], fielder: m[1] };
-  if ((m = h.match(/^c (.+?) b (.+)$/))) return { how: 'caught', bowler: m[2], fielder: m[1] };
-  if ((m = h.match(/^st (.+?) b (.+)$/))) return { how: 'stumped', bowler: m[2], fielder: m[1] };
+  if ((m = h.match(/^c (.+?) b (.+)$/))) return { how: 'caught', bowler: m[2], fielder: m[1].replace(/^†/, '') };
+  if ((m = h.match(/^st (.+?) b (.+)$/))) return { how: 'stumped', bowler: m[2], fielder: m[1].replace(/^†/, '') };
   if ((m = h.match(/^lbw b (.+)$/))) return { how: 'lbw', bowler: m[1], fielder: '' };
   if ((m = h.match(/^hit wicket b (.+)$/))) return { how: 'hit wicket', bowler: m[1], fielder: '' };
   if ((m = h.match(/^b (.+)$/))) return { how: 'bowled', bowler: m[1], fielder: '' };
