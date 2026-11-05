@@ -87,7 +87,7 @@ export const howOf = b => (b.out || b.retired) ? b.how : 'not out';
 // was scored before the mark existed. Text typed in by hand (Edit figures) is shown as typed.
 export const howShown = (m, i, k, b) => {
   const h = howOf(b), d = b.dis;
-  if (!b.out || !d || (d.how !== 'caught' && d.how !== 'stumped') || !d.fielder || h.includes('†') || h !== dismissalText(d.how, d.bowler, d.fielder)) return h;
+  if (!b.out || !d || (d.how !== 'caught' && d.how !== 'stumped' && d.how !== 'run out') || !d.fielder || h.includes('†') || h !== dismissalText(d.how, d.bowler, d.fielder)) return h;
   return dismissalText(d.how, d.bowler, d.fielder, keeperOf(m, 1 - i.bat, k));
 };
 const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -129,7 +129,7 @@ export function dismissalText(how, bowler, fielder, keeper) {
     case 'lbw': return `lbw b ${bowler}`;
     case 'stumped': return `st ${fd || 'keeper'} b ${bowler}`;
     case 'hit wicket': return `hit wicket b ${bowler}`;
-    case 'run out': return `run out${fd ? ` (${fd})` : ''}`;
+    case 'run out': { const kp = String(keeper || '').trim().toLowerCase(); const ro = kp ? fd0.split('/').map(x => (x.trim().toLowerCase() === kp ? '†' : '') + x.trim()).join('/') : fd0; return `run out${ro ? ` (${ro})` : ''}`; }
     default: return how;
   }
 }

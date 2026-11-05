@@ -28,7 +28,7 @@ export function parseDismissal(b) {
   if ((m = h.match(/^lbw b (.+)$/))) return { how: 'lbw', bowler: m[1], fielder: '' };
   if ((m = h.match(/^hit wicket b (.+)$/))) return { how: 'hit wicket', bowler: m[1], fielder: '' };
   if ((m = h.match(/^b (.+)$/))) return { how: 'bowled', bowler: m[1], fielder: '' };
-  if ((m = h.match(/^run out(?: \((.+)\))?$/))) return { how: 'run out', bowler: '', fielder: m[1] || '' };
+  if ((m = h.match(/^run out(?: \((.+)\))?$/))) return { how: 'run out', bowler: '', fielder: (m[1] || '').replace(/†/g, '') };
   return { how: h, bowler: '', fielder: '' };
 }
 
