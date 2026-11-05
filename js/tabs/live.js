@@ -422,7 +422,7 @@ function commentAction(e, before) {
     case 'short': { const ov = [...i.overs].reverse().find(x => x.short); if (ov) { say('event', `The umpires end over ${i.balls / 6} after ${plural(6 - ov.short, 'ball')}, a miscount. It counts as a full over`); commentOver(i, ov, i.bowlers[i.bowler]); } break; }
     case 'xball': say('event', `The umpire allows an extra ball in over ${i.balls / 6}, a miscount`); break;
     case 'relieve': say('event', `${i.bowlers[i.bowler].name} takes over from ${before.bowlerNow || 'the bowler'} to bowl the rest of the over${e.bar ? `. ${before.bowlerNow || 'The bowler'} can't bowl again this innings` : ''}`); break;
-    case 'keeper': say('event', `${live.keepers[e.team]} takes the gloves for ${live.teams[e.team]}`); break;
+    case 'keeper': say('event', `${keeperOf(live, e.team)} takes the gloves for ${live.teams[e.team]}`); break;
     case 'bowler': {
       const b = i.bowlers[i.bowler];
       if (b && b.balls === 0 && !before.bowlers.includes(b.name.toLowerCase())) say('event', `${b.name} comes into the attack`);
@@ -1457,14 +1457,14 @@ function coreKeeper(team, name) {
   const sq = playersOf(live, team);
   const hit = sq && sq.find(n => sameName(n, nm));
   if (sq && !hit) return `${nm} isn't in the squad.`;
-  const cur = live.keepers?.[team];
-  if (cur && sameName(cur, nm)) return `${cur} is already keeping.`;
-  (live.keepers = live.keepers || [null, null])[team] = hit || nm;
+  const now = keeperOf(live, team);
+  if (now && sameName(now, nm)) return `${now} is already keeping.`;
+  (live.kchg = live.kchg || []).push({ team, name: hit || nm, inn: live.inns.length - 1 });
   return null;
 }
 function keeperModal() {
   if (!live || live.status !== 'live') return;
-  const team = 1 - cur().bat, sq = playersOf(live, team), now = live.keepers?.[team];
+  const team = 1 - cur().bat, sq = playersOf(live, team), now = keeperOf(live, team);
   const body = openModal('Change wicketkeeper', `
     <p style="margin:0 0 12px;color:var(--fg-2)">${esc(live.teams[team])} ${now ? `are keeping with ${esc(now)}` : 'have no keeper set'}. Stumpings from now on default to the new keeper. Earlier stumpings stay as they were.</p>
     ${sq ? selectField('kp-name', 'New keeper', sq.filter(n => !now || !sameName(n, now)).map(n => ({ v: n, l: n })), '') : '<div class="field"><div class="lab"><label for="kp-name">New keeper</label></div><input id="kp-name" type="text" maxlength="30" autocomplete="off"></div>'}
@@ -1586,11 +1586,18 @@ const parseSquadFull = text => {
 const parseSquad = text => parseSquadFull(text).names;
 const markRoles = (names, keeper, captain) => names.map(n => n + (captain && sameName(n, captain) ? ' (c)' : '') + (keeper && sameName(n, keeper) ? ' (wk)' : ''));
 // " (c)", " (wk)" or " (c, wk)" after a player's name, for the given team.
-export const roleTag = (m, team, name) => {
+// The keeper in force for a team: the one picked at the start, then any changed during the match. For a
+// scorecard pass the innings number: a change made in a later innings doesn't touch an earlier innings' card.
+export const keeperOf = (m, team, inn = Infinity) => {
+  const c = (m?.kchg || []).filter(x => x.team === team && x.inn <= inn).pop();
+  return c ? c.name : m?.keepers?.[team] || null;
+};
+export const roleTag = (m, team, name, inn) => {
   if (!m || !name) return '';
   const r = [];
   if (m.captains?.[team] && sameName(m.captains[team], name)) r.push('c');
-  if (m.keepers?.[team] && sameName(m.keepers[team], name)) r.push('wk');
+  const kp = keeperOf(m, team, inn);
+  if (kp && sameName(kp, name)) r.push('wk');
   return r.length ? ` (${r.join(', ')})` : '';
 };
 const FOLLOW_ON = { 5: 200, 4: 150, 3: 150, 2: 100, 1: 75 }; // Laws of Cricket 14.1
@@ -2204,9 +2211,9 @@ export function scorecardHTML(m, idx) {
   const bats = i.batters.map((b, k) => {
     const atCrease = isCur && (k === i.striker || k === i.non);
     const how = howOf(b);
-    return `<tr><td>${esc(b.name + roleTag(m, i.bat, b.name))}${atCrease && k === i.striker ? ' *' : ''}</td><td class="dismissal">${esc(how)}</td><td class="num"><b>${b.runs}</b></td><td class="num">${b.balls}</td><td class="num">${b.f4}</td><td class="num">${b.f6}</td><td class="num">${b.balls ? nf(b.runs / b.balls * 100, 1) : '—'}</td></tr>`;
+    return `<tr><td>${esc(b.name + roleTag(m, i.bat, b.name, idx))}${atCrease && k === i.striker ? ' *' : ''}</td><td class="dismissal">${esc(how)}</td><td class="num"><b>${b.runs}</b></td><td class="num">${b.balls}</td><td class="num">${b.f4}</td><td class="num">${b.f6}</td><td class="num">${b.balls ? nf(b.runs / b.balls * 100, 1) : '—'}</td></tr>`;
   }).join('');
-  const bowls = i.bowlers.filter(b => b.balls || b.runs).map(b => `<tr><td>${esc(b.name + roleTag(m, 1 - i.bat, b.name))}</td><td class="num">${fmtOvers(b.balls)}</td><td class="num">${b.maidens}</td><td class="num">${b.runs}</td><td class="num"><b>${b.wkts}</b></td><td class="num">${b.balls ? nf(econOf(b)) : '—'}</td><td class="num">${b.dots}</td><td class="num">${b.wd}/${b.nb}</td></tr>`).join('');
+  const bowls = i.bowlers.filter(b => b.balls || b.runs).map(b => `<tr><td>${esc(b.name + roleTag(m, 1 - i.bat, b.name, idx))}</td><td class="num">${fmtOvers(b.balls)}</td><td class="num">${b.maidens}</td><td class="num">${b.runs}</td><td class="num"><b>${b.wkts}</b></td><td class="num">${b.balls ? nf(econOf(b)) : '—'}</td><td class="num">${b.dots}</td><td class="num">${b.wd}/${b.nb}</td></tr>`).join('');
   return `<div class="card scorecard">
     <div class="sc-head"><h3>${esc(team)} · ${esc(innName(m, idx))}</h3>${m === live && canEdit() ? `<button type="button" class="btn ghost sm" data-act="figs" data-k="${idx}">Edit figures</button>` : ''}<span class="sc-total">${i.runs}/${i.wkts} <span class="dim" style="font-size:.8em">(${fmtOvers(i.balls)} ov, RR ${rr})</span></span></div>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Batter</th><th>Dismissal</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th></tr></thead><tbody>${bats}</tbody></table></div>
@@ -2610,7 +2617,7 @@ export function wicketModal() {
     $('#wk-f-wrap').hidden = !['caught', 'stumped', 'run out'].includes(how);
     $('#wk-f2-wrap').hidden = how !== 'run out';
     const fs = $('#wk-fielder');
-    const keeper = live.keepers?.[1 - i.bat];
+    const keeper = keeperOf(live, 1 - i.bat);
     if (fs && fs.tagName === 'SELECT' && keeper) { // stumpings default to the keeper
       if (how === 'stumped' && (fs.value === '' || fs.dataset.auto === '1')) { fs.value = keeper; fs.dataset.auto = '1'; }
       else if (how !== 'stumped' && fs.dataset.auto === '1') { fs.value = ''; fs.dataset.auto = '0'; }
@@ -2995,10 +3002,10 @@ export function scorecardCSV(m) {
   m.inns.forEach((i, k) => {
     rows.push([`${m.teams[i.bat]} ${innName(m, k)}`, `${i.runs}/${i.wkts}`, `${fmtOvers(i.balls)} overs`]);
     rows.push(['Batter', 'Dismissal', 'Runs', 'Balls', '4s', '6s', 'SR']);
-    i.batters.forEach(b => rows.push([b.name + roleTag(m, i.bat, b.name), howOf(b), b.runs, b.balls, b.f4, b.f6, b.balls ? fx(b.runs / b.balls * 100) : '']));
+    i.batters.forEach(b => rows.push([b.name + roleTag(m, i.bat, b.name, k), howOf(b), b.runs, b.balls, b.f4, b.f6, b.balls ? fx(b.runs / b.balls * 100) : '']));
     rows.push(['Extras', `b ${i.extras.b}, lb ${i.extras.lb}, w ${i.extras.wd}, nb ${i.extras.nb}${i.extras.pen ? `, pen ${i.extras.pen}` : ''}`]);
     rows.push(['Bowler', 'Overs', 'Maidens', 'Runs', 'Wickets', 'Econ', 'Dots']);
-    i.bowlers.filter(b => b.balls || b.runs).forEach(b => rows.push([b.name + roleTag(m, 1 - i.bat, b.name), fmtOvers(b.balls), b.maidens, b.runs, b.wkts, b.balls ? fx(econOf(b)) : '', b.dots]));
+    i.bowlers.filter(b => b.balls || b.runs).forEach(b => rows.push([b.name + roleTag(m, 1 - i.bat, b.name, k), fmtOvers(b.balls), b.maidens, b.runs, b.wkts, b.balls ? fx(econOf(b)) : '', b.dots]));
     rows.push([]);
   });
   if (m.result) rows.push(['Result', m.result]);
@@ -3208,7 +3215,7 @@ export async function scorecardImage(m) {
       i.batters.forEach(b => {
         y += 34; x._y = y;
         x.fillStyle = 'rgba(255,255,255,0.05)'; x.fillRect(P, y - 25, W - 2 * P, 1);
-        x.fillStyle = '#e8f0eb'; x.font = `600 20px ${B}`; x.fillText(fitText(x, b.name + roleTag(m, i.bat, b.name), 285), P, y);
+        x.fillStyle = '#e8f0eb'; x.font = `600 20px ${B}`; x.fillText(fitText(x, b.name + roleTag(m, i.bat, b.name, k), 285), P, y);
         x.fillStyle = '#8ea398'; x.font = `400 18px ${B}`; x.fillText(fitText(x, howOf(b), 470), P + 300, y);
         x.font = `600 20px ${B}`; x.fillStyle = '#ffffff'; num(x, b.runs, 840);
         x.fillStyle = '#c3d1c9'; [b.balls, b.f4, b.f6, b.balls ? nf(b.runs / b.balls * 100, 1) : '—'].forEach((v, j) => num(x, v, cols[j + 1][1]));
@@ -3234,7 +3241,7 @@ export async function scorecardImage(m) {
         bw.forEach(b => {
           y += 34; x._y = y;
           x.fillStyle = 'rgba(255,255,255,0.05)'; x.fillRect(P, y - 25, W - 2 * P, 1);
-          x.fillStyle = '#e8f0eb'; x.font = `600 20px ${B}`; x.fillText(fitText(x, b.name + roleTag(m, 1 - i.bat, b.name), 600), P, y);
+          x.fillStyle = '#e8f0eb'; x.font = `600 20px ${B}`; x.fillText(fitText(x, b.name + roleTag(m, 1 - i.bat, b.name, k), 600), P, y);
           x.fillStyle = '#c3d1c9';
           [fmtOvers(b.balls), b.maidens, b.runs].forEach((v, j) => num(x, v, bc[j][1]));
           x.fillStyle = '#ffffff'; num(x, b.wkts, 1000);
