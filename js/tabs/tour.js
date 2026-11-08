@@ -1,6 +1,6 @@
 /* Crease — Bilateral tours: one side visiting another for a T20I series, an ODI series and a Test series
    (any of them). Each series has its own score, each match is scored in the right format, and the tour
-   keeps the leading run-scorers and wicket-takers. Tests on a tour can also count in a Test championship. */
+   has full player stats for each series. Tests on a tour can also count in a Test championship. */
 import { finishedMatches } from '../records.js';
 import { fixtureOutcome } from '../stats.js';
 import { closeModal, confirmBox, openModal, toast } from '../ui.js';
@@ -113,24 +113,6 @@ function simulate(t, f) {
     return true;
 }
 
-/* ---------- Leading players, from the matches scored in Crease ---------- */
-function leaders(t, l, byId) {
-    const runs = new Map(), wk = new Map();
-    t.fixtures.filter(f => f.leg === l.id && f.matchId).forEach(f => {
-        const m = byId.get(f.matchId);
-        if (!m) return;
-        const d = m.data;
-        d.inns.filter(i => !i.so).forEach(i => {
-            const bt = d.teams[i.bat], bw = d.teams[1 - i.bat];
-            i.batters.forEach(b => { if (!b.balls && !b.out) return; const k = `${bt}|${b.name}`.toLowerCase(); const r = runs.get(k) || { name: b.name, team: bt, runs: 0, balls: 0, inns: 0, outs: 0, hs: 0 }; r.runs += b.runs; r.balls += b.balls; r.inns++; if (b.out) r.outs++; r.hs = Math.max(r.hs, b.runs); runs.set(k, r); });
-            i.bowlers.forEach(b => { if (!b.balls) return; const k = `${bw}|${b.name}`.toLowerCase(); const r = wk.get(k) || { name: b.name, team: bw, w: 0, r: 0, balls: 0 }; r.w += b.wkts; r.r += b.runs; r.balls += b.balls; wk.set(k, r); });
-        });
-    });
-    const bat = [...runs.values()].sort((x, y) => y.runs - x.runs || x.balls - y.balls).slice(0, 5);
-    const bowl = [...wk.values()].filter(x => x.w).sort((x, y) => y.w - x.w || x.r - y.r).slice(0, 5);
-    return { bat, bowl };
-}
-
 /* ---------- Rendering ---------- */
 const openLegs = new Map();
 function matchRow(t, f, byId, busy) {
@@ -164,14 +146,8 @@ export function renderTour(t, main, { busy }) {
         const s = states[k], games = t.fixtures.filter(f => f.leg === l.id).sort((x, y) => x.no - y.no);
         const def = (s.done > 0 && !s.complete) || k === nextIn;
         const open = openLegs.has(l.id) ? openLegs.get(l.id) : def;
-        const L = leaders(t, l, byId);
-        const lead = L.bat.length || L.bowl.length ? `<div class="grid-2" style="margin-top:12px">
-      <div><p class="modal-sub">Most runs</p>${L.bat.map(x => `<div class="tp-line"><span>${esc(x.name)} <span class="dim">${esc(x.team)}</span></span><span><b>${x.runs}</b> <span class="dim">${x.balls ? `SR ${(x.runs / x.balls * 100).toFixed(1)}` : ''}${x.outs ? ` · avg ${(x.runs / x.outs).toFixed(1)}` : ''}</span></span></div>`).join('') || '<p class="hint" style="margin:0">—</p>'}</div>
-      <div><p class="modal-sub">Most wickets</p>${L.bowl.map(x => `<div class="tp-line"><span>${esc(x.name)} <span class="dim">${esc(x.team)}</span></span><span><b>${x.w}</b> <span class="dim">econ ${(x.r / (x.balls / 6)).toFixed(2)}</span></span></div>`).join('') || '<p class="hint" style="margin:0">—</p>'}</div></div>
-      <p class="hint" style="margin-bottom:0">From the matches scored in Crease (typed-in and simulated results have no player figures).</p>` : '';
         return `<details class="card fold t-leg" data-l="${l.id}"${open ? ' open' : ''}><summary><h2 class="card-title">${esc(FORMATS_T[l.fmt].name)} series</h2><span class="fold-peek" style="display:block">${esc(legScore(t, l, s))} · ${plural(s.total, FORMATS_T[l.fmt].name)}${l.fmt === 'Test' || l.overs === FORMATS_T[l.fmt].overs ? '' : ` of ${l.overs} overs`}${legDates(t, l) ? ` · ${esc(legDates(t, l))}` : ''}</span></summary>
       ${games.map(f => matchRow(t, f, byId, busy)).join('')}
-      ${lead}
       <div class="fx-acts" style="margin-top:10px">${s.done ? '' : `<button type="button" class="btn ghost sm danger" data-tr="t-ldel" data-l="${l.id}">Remove series</button>`}<button type="button" class="btn ghost sm" data-tr="t-ledit" data-l="${l.id}">Edit series</button></div></details>`;
     }).join('');
     const left = t.fixtures.filter(f => !isPlayedT(t, f, byId) && !busy(f)).length;
