@@ -12,7 +12,7 @@ import { loadNRR } from './nrr.js';
 import { saveMatch } from './saved.js';
 import { cwc23Template, cwc23Venues } from './cwc.js';
 import { blankTestTour, isTestTour, renderTestTour, testTourAction, testTourForm, wtcTemplate } from './wtc.js';
-import { blankTour, indNzTemplate, isTour, legOf, matchName, renderTour, tourAction, tourForm, tourMatchSetup } from './tour.js';
+import { bgt2425Template, blankTour, indNzTemplate, isTour, legOf, matchName, renderTour, tourAction, tourForm, tourMatchSetup } from './tour.js';
 
 const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 const list = () => { const v = store.get('tournaments', []); return Array.isArray(v) ? v : []; };
@@ -914,7 +914,7 @@ RENDER.tournament = function renderTournament() {
 function tournamentForm(t) {
   const body = openModal(t ? 'Edit tournament' : 'New tournament', `
     ${t ? '' : `<div class="tf-tpl"><p class="modal-sub" style="margin:0 0 8px">Start from a real one</p>
-      <div class="modal-actions" style="justify-content:flex-start;margin:0"><button type="button" class="btn ghost" data-x="wtc" style="white-space:normal;height:auto;min-height:40px;text-align:left">ICC World Test Championship 2025–27</button><button type="button" class="btn ghost" data-x="indnz" style="white-space:normal;height:auto;min-height:40px;text-align:left">India tour of New Zealand 2026</button><button type="button" class="btn ghost" data-x="cwc23" style="white-space:normal;height:auto;min-height:40px;text-align:left">ICC Men's Cricket World Cup 2023</button></div>
+      <div class="modal-actions" style="justify-content:flex-start;margin:0"><button type="button" class="btn ghost" data-x="wtc" style="white-space:normal;height:auto;min-height:40px;text-align:left">ICC World Test Championship 2025–27</button><button type="button" class="btn ghost" data-x="indnz" style="white-space:normal;height:auto;min-height:40px;text-align:left">India tour of New Zealand 2026</button><button type="button" class="btn ghost" data-x="bgt2425" style="white-space:normal;height:auto;min-height:40px;text-align:left">Border–Gavaskar Trophy 2024–25</button><button type="button" class="btn ghost" data-x="cwc23" style="white-space:normal;height:auto;min-height:40px;text-align:left">ICC Men's Cricket World Cup 2023</button></div>
       <p class="hint" style="margin:6px 0 0">The WTC: all nine teams, the 27 series (71 Tests) with dates and grounds, the percentage table, over-rate penalties and the final at The Oval. The tour: 5 T20Is, 5 ODIs and 2 Tests with dates and grounds; the Tests also count in the WTC. The 2023 World Cup: ten teams, all 45 league matches with dates and grounds, 50 overs a side, and the semi-finals and final, filled in from the table.</p></div>
     <div class="fields" style="margin-top:14px"><div class="field wide"><div class="lab"><label for="tf-kind">Or make your own</label></div><select id="tf-kind"><option value="league">Limited-overs league</option><option value="test">Test championship (like the WTC)</option><option value="tour">Bilateral tour (T20Is, ODIs and Tests)</option></select></div></div>`}
     <div class="fields">
@@ -955,6 +955,13 @@ function tournamentForm(t) {
       if (!update(nt)) return; // storage full: the warning is showing
       store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
       toast('India tour of New Zealand 2026 created');
+      return;
+    }
+    if (x.dataset.x === 'bgt2425') {
+      const nt = bgt2425Template();
+      if (!update(nt)) return; // storage full: the warning is showing
+      store.set('tour.active', nt.id); closeModal(); RENDER.tournament();
+      toast('Border–Gavaskar Trophy 2024–25 created');
       return;
     }
     if (x.dataset.x === 'cwc23') {
