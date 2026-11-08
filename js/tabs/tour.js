@@ -5,7 +5,7 @@ import { finishedMatches } from '../records.js';
 import { fixtureOutcome } from '../stats.js';
 import { closeModal, confirmBox, openModal, toast } from '../ui.js';
 import { $, esc, plural, uid } from '../utils.js';
-import { testOutcome } from './wtc.js';
+import { statsHTML, testOutcome } from './wtc.js';
 
 export const isTour = t => !!t && t.kind === 'tour';
 const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
@@ -183,7 +183,8 @@ export function renderTour(t, main, { busy }) {
       ${summary ? `<div class="tour-sum">${summary}</div>` : '<p class="hint" style="margin:0">No series yet. “Add a series” picks the format and the number of matches.</p>'}
       <p class="hint">${esc(t.teams[0])} are at home. “Score live” sets up each match in its format (20 overs, 50 overs or a Test). A tie decided by a super over counts as a win in the series. A Test scored here also goes into a Test championship that has the same Test between these teams, like the World Test Championship.</p>
     </div>
-    ${legCards}`;
+    ${legCards}
+    ${statsHTML(t, byId)}`;
 }
 
 /* ---------- Forms ---------- */

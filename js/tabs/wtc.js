@@ -332,8 +332,13 @@ export function renderTestTour(t, main, { busy, persist }) {
    From the Tests scored in Crease (or linked from Saved matches), the final included. Results entered by hand or
    simulated have no scorecard, so they add nothing here. Players are told apart by team and name. */
 const oversTxt = b => `${Math.floor(b / 6)}${b % 6 ? `.${b % 6}` : ''}`;
+// A Test championship's stats can be taken for its whole cycle or one series; a tour's for one of its series
+// (Tests, ODIs or T20Is), since figures from different formats shouldn't be mixed.
+const isTourT = t => t.kind === 'tour';
+const inScope = (t, f, sid) => !sid || (isTourT(t) ? f.leg === sid : f.series === sid);
+const LEG_MANY = { T20I: 'T20Is', ODI: 'ODIs', Test: 'Tests' }, LEG_ONE = { T20I: 'T20I', ODI: 'ODI', Test: 'Test' };
 function testStats(t, byId, sid = '') {
-    const fxs = t.fixtures.filter(f => !sid || f.series === sid); // one series, or the whole cycle (final included)
+    const fxs = t.fixtures.filter(f => inScope(t, f, sid)); // one series, or the whole cycle (final included)
     const P = new Map(), inns = [], spells = [], matchFigs = [], totals = [];
     const get = (team, name) => {
         const k = `${team}|${name}`.toLowerCase();
@@ -387,14 +392,18 @@ function statBoard(title, rows, val, sub, note = '') {
 // Which stats are showing, per tournament: '' for the whole cycle, or a series id.
 const statScope = new Map();
 let statsCtx = null;
-const scoredIn = (t, sid, byId) => t.fixtures.some(f => f.series === sid && f.matchId && byId.get(f.matchId)?.data);
+const scoredIn = (t, sid, byId) => t.fixtures.some(f => inScope(t, f, sid) && f.matchId && byId.get(f.matchId)?.data);
 const seriesName = s => `${s.home} v ${s.away}${s.trophy ? ` (${s.trophy})` : ''}`;
-function statsHTML(t, byId) {
+export function statsHTML(t, byId) {
     statsCtx = t;
-    const scored = (t.series || []).filter(s => scoredIn(t, s.id, byId));
+    const tour = isTourT(t);
+    const scored = (tour ? (t.legs || []) : (t.series || [])).filter(s => scoredIn(t, s.id, byId));
     let sid = statScope.get(t.id) || '';
     if (sid && !scored.some(s => s.id === sid)) sid = '';
-    const ser = sid ? t.series.find(s => s.id === sid) : null;
+    if (tour && !sid && scored.length) sid = scored[0].id; // a tour shows one format at a time
+    const ser = sid && !tour ? t.series.find(s => s.id === sid) : null;
+    const leg = sid && tour ? t.legs.find(l => l.id === sid) : null;
+    const unit = leg ? LEG_ONE[leg.fmt] : 'Test', units = leg ? LEG_MANY[leg.fmt] : 'Tests';
     const S = testStats(t, byId, sid);
     const L = S.players;
     const top = (ok, sort, n = 5) => L.filter(ok).sort(sort).slice(0, n);
@@ -415,8 +424,8 @@ function statsHTML(t, byId) {
     const hiT = S.totals.slice().sort((a, b) => b.runs - a.runs).slice(0, 5).map(x => ({ ...x, name: x.team, team: `v ${x.opp}` }));
     const loT = S.totals.filter(x => x.wkts >= 10).sort((a, b) => a.runs - b.runs).slice(0, 5).map(x => ({ ...x, name: x.team, team: `v ${x.opp}` }));
     const sr = x => (x.balls ? nf(x.runs / x.balls * 100, 1) : '—');
-    const pick = scored.length ? `<div class="field" style="margin:0 0 10px"><div class="lab"><label for="w-stat-scope">Show stats for</label></div><select id="w-stat-scope"><option value="">The whole cycle</option>${scored.map(s => `<option value="${s.id}"${s.id === sid ? ' selected' : ''}>${esc(seriesName(s))}</option>`).join('')}</select></div>` : '';
-    const head = `<div class="card"><h2 class="card-title">${ser ? `Series stats: ${esc(ser.home)} v ${esc(ser.away)}` : 'Player stats'}</h2>${pick}<p class="hint" style="margin:0">${S.tests ? `From ${ser ? `${S.tests} of the ${plural(t.fixtures.filter(f => f.series === sid).length, 'Test')} in this series` : plural(S.tests, 'Test')} scored in Crease.${t.fixtures.some(f => (!sid || f.series === sid) && !f.matchId && (f.manual || f.nr)) ? ' Results entered by hand or simulated have no scorecard, so they aren\'t counted.' : ''}` : 'Runs, wickets and records fill in as Tests are scored here (with “Score live”, or by linking a saved match). Results entered by hand or simulated have no scorecard, so they don\'t count.'}</p></div>`;
+    const pick = scored.length ? `<div class="field" style="margin:0 0 10px"><div class="lab"><label for="w-stat-scope">Show stats for</label></div><select id="w-stat-scope">${tour ? '' : '<option value="">The whole cycle</option>'}${scored.map(s => `<option value="${s.id}"${s.id === sid ? ' selected' : ''}>${esc(tour ? `${LEG_ONE[s.fmt]} series` : seriesName(s))}</option>`).join('')}</select></div>` : '';
+    const head = `<div class="card"><h2 class="card-title">${leg ? `${LEG_ONE[leg.fmt]} series stats` : ser ? `Series stats: ${esc(ser.home)} v ${esc(ser.away)}` : 'Player stats'}</h2>${pick}<p class="hint" style="margin:0">${S.tests ? `From ${ser || leg ? `${S.tests} of the ${plural(t.fixtures.filter(f => inScope(t, f, sid)).length, unit, units)} in this series` : plural(S.tests, 'Test')} scored in Crease.${t.fixtures.some(f => inScope(t, f, sid) && !f.matchId && (f.manual || f.nr)) ? ' Results entered by hand or simulated have no scorecard, so they aren\'t counted.' : ''}` : `Runs, wickets and records fill in as ${tour ? 'matches' : 'Tests'} are scored here (with “Score live”, or by linking a saved match). Results entered by hand or simulated have no scorecard, so they don't count.`}</p></div>`;
     if (!L.length) return `<div id="w-stats">${head}</div>`;
     return `<div id="w-stats">${head}
     <div class="grid-2" style="align-items:start">
@@ -424,7 +433,7 @@ function statsHTML(t, byId) {
       ${statBoard('Most wickets', wkts, x => x.bw, x => `avg ${nf(bavg(x), 2)} · ${oversTxt(x.bb)} ov${x.w5 ? ` · ${x.w5}×5w` : ''}`)}
       ${statBoard('Highest scores', hs, x => `${x.r}${x.out ? '' : '*'}`, x => `${x.b} balls v ${esc(x.opp)}`)}
       ${statBoard('Best bowling in an innings', bestI, x => `${x.w}/${x.r}`, x => `${oversTxt(x.balls)} ov v ${esc(x.opp)}`)}
-      ${statBoard('Best match figures', bestM, x => `${x.w}/${x.r}`, x => `v ${esc(x.opp)}`, 'Both innings of one Test.')}
+      ${!leg || leg.fmt === 'Test' ? statBoard('Best match figures', bestM, x => `${x.w}/${x.r}`, x => `v ${esc(x.opp)}`, 'Both innings of one Test.') : ''}
       ${statBoard('Most hundreds', tons, x => x.n100, x => `${x.n50} fifties · ${x.runs} runs`)}
       ${statBoard('Best batting average', avgs, x => nf(avg(x), 2), x => `${x.runs} runs · SR ${sr(x)}`, `At least ${plural(minInns, 'innings', 'innings')} and out at least once.`)}
       ${statBoard('Best bowling average', bavgs, x => nf(bavg(x), 2), x => `${plural(x.bw, 'wkt')} · econ ${x.bb ? nf(x.br / (x.bb / 6), 2) : '—'}`, `At least ${plural(minW, 'wicket')}.`)}
