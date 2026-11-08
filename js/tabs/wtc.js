@@ -415,6 +415,9 @@ export function statsHTML(t, byId) {
     const avgs = top(x => x.inns >= minInns && avg(x) != null, (a, b) => avg(b) - avg(a) || b.runs - a.runs);
     const topW = L.reduce((m, x) => Math.max(m, x.bw), 0), minW = Math.min(10, Math.max(1, Math.ceil(topW / 3)));
     const bavgs = top(x => x.bw >= minW, (a, b) => bavg(a) - bavg(b) || b.bw - a.bw);
+    const econ = x => (x.bb ? x.br / (x.bb / 6) : null);
+    const maxBB = L.reduce((m, x) => Math.max(m, x.bb), 0), minBB = Math.min(120, Math.max(6, Math.floor(maxBB / 4)));
+    const ecos = top(x => x.bb >= minBB, (a, b) => econ(a) - econ(b) || b.bw - a.bw);
     const tons = top(x => x.n100 > 0, (a, b) => b.n100 - a.n100 || b.n50 - a.n50 || b.runs - a.runs);
     const sixes = top(x => x.f6 > 0, (a, b) => b.f6 - a.f6 || b.runs - a.runs);
     const field = top(x => x.ct + x.st > 0, (a, b) => b.ct + b.st - (a.ct + a.st) || b.ct - a.ct);
@@ -437,6 +440,7 @@ export function statsHTML(t, byId) {
       ${statBoard('Most hundreds', tons, x => x.n100, x => `${x.n50} fifties · ${x.runs} runs`)}
       ${statBoard('Best batting average', avgs, x => nf(avg(x), 2), x => `${x.runs} runs · SR ${sr(x)}`, `At least ${plural(minInns, 'innings', 'innings')} and out at least once.`)}
       ${statBoard('Best bowling average', bavgs, x => nf(bavg(x), 2), x => `${plural(x.bw, 'wkt')} · econ ${x.bb ? nf(x.br / (x.bb / 6), 2) : '—'}`, `At least ${plural(minW, 'wicket')}.`)}
+      ${statBoard('Best economy', ecos, x => nf(econ(x), 2), x => `${oversTxt(x.bb)} ov · ${plural(x.bw, 'wkt')}`, `At least ${oversTxt(minBB)} overs bowled.`)}
       ${statBoard('Most catches and stumpings', field, x => x.ct + x.st, x => `${plural(x.ct, 'catch', 'catches')}${x.st ? ` · ${x.st} st` : ''}`)}
       ${statBoard('Most sixes', sixes, x => x.f6, x => `${x.runs} runs`)}
       ${statBoard('Highest team totals', hiT, x => `${x.runs}${x.wkts < 10 ? `/${x.wkts}${x.dec ? 'd' : ''}` : ''}`, x => `${oversTxt(x.balls)} ov`)}
