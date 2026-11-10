@@ -5,7 +5,7 @@ import { finishedMatches } from '../records.js';
 import { fixtureOutcome } from '../stats.js';
 import { closeModal, confirmBox, openModal, toast } from '../ui.js';
 import { $, esc, plural, uid } from '../utils.js';
-import { statsHTML, testOutcome } from './wtc.js';
+import { pomForm, pomLine, statsHTML, testOutcome } from './wtc.js';
 
 export const isTour = t => !!t && t.kind === 'tour';
 const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
@@ -119,8 +119,8 @@ function matchRow(t, f, byId, busy) {
     const o = tourOutcome(t, f, byId);
     let status, acts;
     if (o && !o.error) {
-        status = `<span class="${o.res === 'nr' || o.res === 'd' ? 'dim' : ''}">${esc(o.text)}</span>${isSim(f) ? ' <span class="chip r1" style="font-size:.65rem">Simulated</span>' : ''}`;
-        acts = `${o.linked ? `<button type="button" class="btn ghost sm" data-tr="card" data-f="${f.id}">Scorecard</button>` : ''}${f.manual ? `<button type="button" class="btn ghost sm" data-tr="t-manual" data-f="${f.id}">Edit result</button>` : ''}${isSim(f) ? `<button type="button" class="btn ghost sm" data-tr="t-resim" data-f="${f.id}">Simulate again</button>` : ''}<button type="button" class="btn ghost sm" data-tr="t-clear" data-f="${f.id}">Clear result</button>`;
+        status = `<span class="${o.res === 'nr' || o.res === 'd' ? 'dim' : ''}">${esc(o.text)}</span>${isSim(f) ? ' <span class="chip r1" style="font-size:.65rem">Simulated</span>' : ''}${pomLine(f, o)}`;
+        acts = `${o.linked ? `<button type="button" class="btn ghost sm" data-tr="card" data-f="${f.id}">Scorecard</button><button type="button" class="btn ghost sm" data-tr="t-pom" data-f="${f.id}">Player of the Match</button>` : ''}${f.manual ? `<button type="button" class="btn ghost sm" data-tr="t-manual" data-f="${f.id}">Edit result</button>` : ''}${isSim(f) ? `<button type="button" class="btn ghost sm" data-tr="t-resim" data-f="${f.id}">Simulate again</button>` : ''}<button type="button" class="btn ghost sm" data-tr="t-clear" data-f="${f.id}">Clear result</button>`;
     } else {
         const b = busy(f);
         status = b ? '<span class="badge live" style="font-size:.65rem">Being scored</span>' : o?.error ? `<span class="neg">${esc(o.error)}</span>` : '<span class="dim">Not played yet</span>';
@@ -286,6 +286,7 @@ export function tourForm(t, save) {
 export async function tourAction(t, a, f, b, { save, busy }) {
     switch (a) {
         case 't-manual': if (f) manualForm(t, f, save); return true;
+        case 't-pom': if (f) pomForm(f, tourOutcome(t, f, byIdNow()), save); return true;
         case 't-when': if (f) whenForm(f, save); return true;
         case 't-nr': if (f) { f.nr = true; f.simNR = false; f.manual = null; f.matchId = null; save(); toast(legOf(t, f)?.fmt === 'Test' ? 'Marked as abandoned (a draw)' : 'Marked as no result'); } return true;
         case 't-sim': if (f && simulate(t, f)) { save(); toast('Result simulated'); } return true;

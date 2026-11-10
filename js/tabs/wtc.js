@@ -113,6 +113,67 @@ const played = (f, byId) => { const o = testOutcome(f, byId); return !!o && !o.e
 const isSim = f => !!(f.manual?.sim || f.simNR);
 const byIdNow = () => new Map(finishedMatches().map(m => [m.id, m]));
 
+/* ---------- Player of the Match ----------
+   For a match scored in Crease: the player with the biggest impact (runs, wickets, catches) on the winning side,
+   unless one was chosen by hand. Used by Test championships and by tours. */
+const winnerOfMatch = d => { const r = String(d.result || '').toLowerCase(); return (d.teams || []).find(n => r.startsWith(`${String(n).toLowerCase()} won`)) || null; };
+export function matchImpact(d) {
+    const P = new Map();
+    const get = (team, name) => {
+        const k = `${team}|${name}`.toLowerCase();
+        let p = P.get(k);
+        if (!p) { p = { name, team, bat: [], w: 0, r: 0, bb: 0, fd: 0, imp: 0 }; P.set(k, p); }
+        return p;
+    };
+    (d.squads || []).forEach((sq, t) => (sq || []).forEach(n => get(d.teams[t], String(n).replace(/\s*[(†].*$/, '').trim())));
+    d.inns.filter(i => !i.so).forEach(i => {
+        const bt = d.teams[i.bat], bw = d.teams[1 - i.bat];
+        i.batters.forEach(b => {
+            if (b.balls || b.out || b.runs) {
+                const p = get(bt, b.name);
+                p.bat.push({ r: b.runs, out: !!b.out }); p.imp += b.runs + (b.runs >= 50 ? 10 : 0) + (b.runs >= 100 ? 20 : 0);
+            }
+            const dis = b.dis;
+            if (b.out && dis && dis.fielder && ['caught', 'stumped', 'run out'].includes(dis.how))
+                dis.fielder.split('/').map(x => x.trim()).filter(x => x && !/^sub(stitute)?\b/i.test(x)).forEach(nm => { const q = get(bw, nm); q.fd++; q.imp += 8; });
+        });
+        i.bowlers.forEach(b => {
+            if (!b.balls && !b.runs) return;
+            const p = get(bw, b.name);
+            p.w += b.wkts; p.r += b.runs; p.bb += b.balls; p.imp += b.wkts * 25 + (b.wkts >= 5 ? 15 : 0);
+        });
+    });
+    return [...P.values()].filter(p => p.bat.length || p.bb || p.fd);
+}
+export function pomOf(f, d) {
+    const pool = matchImpact(d), win = winnerOfMatch(d);
+    const auto = [...pool].sort((x, y) => (win ? (same(y.team, win) - same(x.team, win)) : 0) || y.imp - x.imp)[0] || null;
+    const picked = f.pom ? pool.find(p => same(p.name, f.pom)) : null;
+    return { pool, auto, pom: picked || auto, chosen: !!picked };
+}
+const pomFigs = p => [p.bat.length ? p.bat.map(x => `${x.r}${x.out ? '' : '*'}`).join(' & ') : '', p.bb ? `${p.w}/${p.r}` : '', p.fd ? plural(p.fd, 'catch', 'catches') : ''].filter(Boolean).join(', ');
+export function pomLine(f, o) {
+    if (!o || !o.linked) return '';
+    const { pom } = pomOf(f, o.linked.data);
+    return pom ? `<div class="fx-pom">Player of the Match: <b>${esc(pom.name)}</b> (${esc(pom.team)}) · ${esc(pomFigs(pom))}</div>` : '';
+}
+export function pomForm(f, o, save) {
+    if (!o || !o.linked) { toast('Player of the Match needs a scorecard: score the match here or link a saved match.'); return; }
+    const { pool, auto, pom } = pomOf(f, o.linked.data);
+    if (!pool.length) { toast('No player figures in this match.'); return; }
+    const list = [...pool].sort((a, b) => b.imp - a.imp);
+    const body = openModal(`Player of the Match: ${f.a} v ${f.b}`, `
+    <div class="field"><div class="lab"><label for="pom-s">Player</label></div><select id="pom-s"><option value="">Automatic: ${esc(auto.name)}</option>${list.map(p => `<option value="${esc(p.name)}"${f.pom && same(f.pom, p.name) ? ' selected' : ''}>${esc(p.name)} (${esc(p.team)}) · ${esc(pomFigs(p))}</option>`).join('')}</select></div>
+    <p class="hint">The automatic pick is the player with the biggest impact on the winning side: runs, wickets and catches.</p>
+    <div class="modal-actions"><button type="button" class="btn ghost" data-x="cancel">Cancel</button><button type="button" class="btn" data-x="ok">Save</button></div>`);
+    body.addEventListener('click', e => {
+        const x = e.target.closest('[data-x]');
+        if (!x) return;
+        if (x.dataset.x === 'ok') { const v = $('#pom-s', body).value; if (v) f.pom = v; else delete f.pom; save(); toast(`Player of the Match: ${v || auto.name}`); }
+        closeModal();
+    });
+}
+
 /* ---------- The table ---------- */
 // Series score from the Tests played so far, and the winner once every Test is done.
 export function seriesState(t, s, byId) {
@@ -247,8 +308,8 @@ function testRow(t, f, byId, busy) {
         status = '<span class="dim">The top two in the table, once every league Test is done</span>';
         acts = '';
     } else if (o && !o.error) {
-        status = `<span class="${o.res === 'd' ? 'dim' : ''}">${esc(o.text)}</span>${isSim(f) ? ' <span class="chip r1" style="font-size:.65rem">Simulated</span>' : ''}${penTxt ? `<div class="fx-pom">Over-rate deduction: ${esc(penTxt)} ${pen.a + pen.b === 1 ? 'point' : 'points'}</div>` : ''}`;
-        acts = `${o.linked ? `<button type="button" class="btn ghost sm" data-tr="card" data-f="${f.id}">Scorecard</button>` : ''}${f.manual ? `<button type="button" class="btn ghost sm" data-tr="w-manual" data-f="${f.id}">Edit result</button>` : ''}${isSim(f) ? `<button type="button" class="btn ghost sm" data-tr="w-resim" data-f="${f.id}">Simulate again</button>` : ''}${f.stage ? '' : `<button type="button" class="btn ghost sm" data-tr="w-pen" data-f="${f.id}">Over-rate penalty</button>`}<button type="button" class="btn ghost sm" data-tr="clear" data-f="${f.id}">Clear result</button>`;
+        status = `<span class="${o.res === 'd' ? 'dim' : ''}">${esc(o.text)}</span>${isSim(f) ? ' <span class="chip r1" style="font-size:.65rem">Simulated</span>' : ''}${pomLine(f, o)}${penTxt ? `<div class="fx-pom">Over-rate deduction: ${esc(penTxt)} ${pen.a + pen.b === 1 ? 'point' : 'points'}</div>` : ''}`;
+        acts = `${o.linked ? `<button type="button" class="btn ghost sm" data-tr="card" data-f="${f.id}">Scorecard</button><button type="button" class="btn ghost sm" data-tr="w-pom" data-f="${f.id}">Player of the Match</button>` : ''}${f.manual ? `<button type="button" class="btn ghost sm" data-tr="w-manual" data-f="${f.id}">Edit result</button>` : ''}${isSim(f) ? `<button type="button" class="btn ghost sm" data-tr="w-resim" data-f="${f.id}">Simulate again</button>` : ''}${f.stage ? '' : `<button type="button" class="btn ghost sm" data-tr="w-pen" data-f="${f.id}">Over-rate penalty</button>`}<button type="button" class="btn ghost sm" data-tr="clear" data-f="${f.id}">Clear result</button>`;
     } else {
         status = busy(f) ? '<span class="badge live" style="font-size:.65rem">Being scored</span>' : o?.error ? `<span class="neg">${esc(o.error)}</span>` : '<span class="dim">Not played yet</span>';
         acts = `<button type="button" class="btn sm" data-tr="score" data-f="${f.id}">${busy(f) ? 'Open scorer' : 'Score live'}</button>
@@ -427,11 +488,25 @@ export function statsHTML(t, byId) {
     const hiT = S.totals.slice().sort((a, b) => b.runs - a.runs).slice(0, 5).map(x => ({ ...x, name: x.team, team: `v ${x.opp}` }));
     const loT = S.totals.filter(x => x.wkts >= 10).sort((a, b) => a.runs - b.runs).slice(0, 5).map(x => ({ ...x, name: x.team, team: `v ${x.opp}` }));
     const sr = x => (x.balls ? nf(x.runs / x.balls * 100, 1) : '—');
+    // Player of the series: most Player of the Match awards, then the biggest total impact over the series.
+    const aw = new Map();
+    t.fixtures.filter(f => inScope(t, f, sid) && f.matchId && byId.get(f.matchId)?.data?.inns).forEach(f => {
+        const d = byId.get(f.matchId).data, { pool, pom } = pomOf(f, d);
+        pool.forEach(p => {
+            const k = `${p.team}|${p.name}`.toLowerCase();
+            const x = aw.get(k) || { name: p.name, team: p.team, pom: 0, imp: 0, runs: 0, w: 0 };
+            x.imp += p.imp; x.runs += p.bat.reduce((s, b) => s + b.r, 0); x.w += p.w;
+            if (pom && pom.name === p.name && pom.team === p.team) x.pom++;
+            aw.set(k, x);
+        });
+    });
+    const pos = [...aw.values()].sort((a, b) => b.pom - a.pom || b.imp - a.imp).slice(0, 5);
     const pick = scored.length ? `<div class="field" style="margin:0 0 10px"><div class="lab"><label for="w-stat-scope">Show stats for</label></div><select id="w-stat-scope">${tour ? '' : '<option value="">The whole cycle</option>'}${scored.map(s => `<option value="${s.id}"${s.id === sid ? ' selected' : ''}>${esc(tour ? `${LEG_ONE[s.fmt]} series` : seriesName(s))}</option>`).join('')}</select></div>` : '';
     const head = `<div class="card"><h2 class="card-title">${leg ? `${LEG_ONE[leg.fmt]} series stats` : ser ? `Series stats: ${esc(ser.home)} v ${esc(ser.away)}` : 'Player stats'}</h2>${pick}<p class="hint" style="margin:0">${S.tests ? `From ${ser || leg ? `${S.tests} of the ${plural(t.fixtures.filter(f => inScope(t, f, sid)).length, unit, units)} in this series` : plural(S.tests, 'Test')} scored in Crease.${t.fixtures.some(f => inScope(t, f, sid) && !f.matchId && (f.manual || f.nr)) ? ' Results entered by hand or simulated have no scorecard, so they aren\'t counted.' : ''}` : `Runs, wickets and records fill in as ${tour ? 'matches' : 'Tests'} are scored here (with “Score live”, or by linking a saved match). Results entered by hand or simulated have no scorecard, so they don't count.`}</p></div>`;
     if (!L.length) return `<div id="w-stats">${head}</div>`;
     return `<div id="w-stats">${head}
     <div class="grid-2" style="align-items:start">
+      ${statBoard('Player of the series', pos, x => plural(x.pom, 'award'), x => `${x.runs} runs · ${plural(x.w, 'wkt')}`, 'Most Player of the Match awards, then biggest overall impact.')}
       ${statBoard('Most runs', runs, x => x.runs, x => `${plural(x.inns, 'inns', 'inns')} · avg ${avg(x) != null ? nf(avg(x), 2) : '—'}${x.n100 ? ` · ${plural(x.n100, 'hundred')}` : ''}${x.n50 ? ` · ${plural(x.n50, 'fifty', 'fifties')}` : ''}`)}
       ${statBoard('Most wickets', wkts, x => x.bw, x => `avg ${nf(bavg(x), 2)} · ${oversTxt(x.bb)} ov${x.w5 ? ` · ${x.w5}×5w` : ''}`)}
       ${statBoard('Highest scores', hs, x => `${x.r}${x.out ? '' : '*'}`, x => `${x.b} balls v ${esc(x.opp)}`)}
@@ -635,6 +710,7 @@ export async function testTourAction(t, a, f, b, { save, busy }) {
     switch (a) {
         case 'w-manual': if (f) manualForm(t, f, save); return true;
         case 'w-pen': if (f) penaltyForm(t, f, save); return true;
+        case 'w-pom': if (f) pomForm(f, testOutcome(f, byId()), save); return true;
         case 'w-when': if (f) whenForm(t, f, save); return true;
         case 'w-nr': if (f) { f.nr = true; f.simNR = false; f.manual = null; f.matchId = null; save(); toast('Marked as abandoned: it counts as a draw'); } return true;
         case 'w-sim': if (f && simulateTest(t, f)) { save(); toast('Result simulated'); } return true;
