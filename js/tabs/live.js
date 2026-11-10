@@ -861,6 +861,15 @@ function coreRename(names) {
     (names.batters[k] || []).forEach((nm, j) => { const b = inn.batters[j]; if (b && nm && nm !== b.name) pairs.push([inn.bat, b.name, nm]); });
   });
   pairs.forEach(([team, old, nm]) => renamePlayer(team, old, nm));
+  // The captain picked afterwards (a match scored without one, or the wrong one).
+  (names.captains || []).forEach((nm, t) => {
+    if (!nm) return;
+    const cur = live.captains?.[t];
+    if (cur && sameName(cur, nm)) return;
+    const sq = live.squads?.[t];
+    live.captains = live.captains || [null, null];
+    live.captains[t] = (sq && sq.find(x => sameName(x, nm))) || nm;
+  });
   // The wicketkeeper picked afterwards, for a match scored without one (names go through renamePlayer first).
   (names.keepers || []).forEach((nm, t) => {
     if (!nm) return;
@@ -2824,6 +2833,10 @@ function renameModal(m = live, onSave = names => renameAll(names)) {
   const body = openModal('Edit names', `
     ${m.status === 'done' ? '<p class="hint" style="margin:-6px 0 12px">The match has finished: names change on the scorecard, in Saved and in player records. Scores stay as they are. If it’s a tournament match, keep the team names the same as in the tournament.</p>' : ''}
     <div class="modal-block"><p class="modal-sub">Teams</p><div class="fields">${m.teams.map((t, k) => `<div class="field">${inp(`rn-t${k}`, t)}</div>`).join('')}</div></div>
+    <div class="modal-block"><p class="modal-sub">Captains</p><div class="fields">${m.teams.map((t, k) => {
+    const cur = m.captains?.[k] || '', sq = m.squads?.[k];
+    return sq ? selectField(`rn-c${k}`, `${t} captain`, [{ v: '', l: 'Not set' }, ...sq.map(n => ({ v: n, l: n }))], cur) : `<div class="field"><div class="lab"><label for="rn-c${k}">${esc(t)} captain</label></div>${inp(`rn-c${k}`, cur)}</div>`;
+  }).join('')}</div><p class="hint" style="margin:6px 0 0">The captain gets (c) after his name on the scorecard.</p></div>
     <div class="modal-block"><p class="modal-sub">Wicketkeepers</p><div class="fields">${m.teams.map((t, k) => {
     const cur = m.keepers?.[k] || '', sq = m.squads?.[k];
     return sq ? selectField(`rn-k${k}`, `${t} keeper`, [{ v: '', l: 'Not set' }, ...sq.map(n => ({ v: n, l: n }))], cur) : `<div class="field"><div class="lab"><label for="rn-k${k}">${esc(t)} keeper</label></div>${inp(`rn-k${k}`, cur)}</div>`;
@@ -2840,7 +2853,7 @@ function renameModal(m = live, onSave = names => renameAll(names)) {
     if (!x) return;
     if (x.dataset.x === 'cancel') { closeModal(); return; }
     const val = id => ($('#' + id, body)?.value || '').trim().replace(/\s+/g, ' ');
-    const names = { teams: m.teams.map((_, k) => val(`rn-t${k}`)), keepers: m.teams.map((_, k) => (val(`rn-k${k}`) === (m.keepers?.[k] || '') ? '' : val(`rn-k${k}`))), batters: [], bowlers: [], others: [] };
+    const names = { teams: m.teams.map((_, k) => val(`rn-t${k}`)), captains: m.teams.map((_, k) => (val(`rn-c${k}`) === (m.captains?.[k] || '') ? '' : val(`rn-c${k}`))), keepers: m.teams.map((_, k) => (val(`rn-k${k}`) === (m.keepers?.[k] || '') ? '' : val(`rn-k${k}`))), batters: [], bowlers: [], others: [] };
     m.inns.forEach((inn, k) => {
       names.batters[k] = inn.batters.map((_, j) => val(`rn-b${k}-${j}`));
       names.bowlers[k] = inn.bowlers.map((_, j) => val(`rn-w${k}-${j}`));
