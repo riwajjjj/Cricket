@@ -179,6 +179,7 @@ function runEntry(e) {
     case 'impact': return coreImpact(e.team, e.out, e.inn);
     case 'so': return coreSO(e.s, e.ns, e.bw);
     case 'dayovers': return coreDayOvers(e.overs);
+    case 'daynight': return coreDayNight(e.on);
     case 'adjust': return coreAdjust(e);
     default: return 'an unknown action';
   }
@@ -447,6 +448,7 @@ function commentAction(e, before) {
     case 'session': { const s = live.sessions?.[live.sessions.length - 1]; if (s) say('session', `${s.label}, day ${s.day}: ${s.text}`); break; }
     case 'impact': { const u = live.subs?.[e.team]; if (u) say('event', `Impact Player: ${u.in} replaces ${u.out} for ${live.teams[e.team]}`); break; }
     case 'so': say('event', `${cap1(soName(i.so))}: ${live.teams[i.bat]} ${i.target != null ? `need ${i.target} off the over` : 'bat first'}. ${i.batters[0].name} and ${i.batters[1].name}; ${i.bowlers[0].name} to bowl.`); break;
+    case 'daynight': say('event', e.on ? 'Marked as a day-night Test: the first break is dinner' : 'Marked as a normal Test: lunch, tea and stumps'); break;
     case 'dayovers': { const B = Math.round(e.overs * 6); say('event', `Overs for day ${clockOf().day} set to ${fmtOvers(B)}${B < DAY_BALLS ? ' (time lost to rain or bad light)' : B > DAY_BALLS ? ' (extra time to make up lost overs)' : ''}`); break; }
     case 'newball': say('event', `New ball taken after ${fmtOvers(i.balls - (before.newBallFrom || 0))} overs`); break;
     case 'rain': {
@@ -1033,6 +1035,9 @@ function testNeed(team4, m = live) { return teamTotal(1 - team4, m) - teamTotal(
    innings totals at its end, so runs, wickets and overs per session can be worked out afterwards. */
 const DAY_BALLS = 90 * 6;
 export const SESS = ['Morning', 'Afternoon', 'Evening'], SESS_END = ['Lunch', 'Tea', 'Stumps'];
+// A day-night (pink ball) Test starts in the afternoon: the first break is dinner, then tea, then stumps.
+export const sessName = (m, s) => (m?.dayNight ? ['First', 'Second', 'Third'] : SESS)[s];
+export const sessEnd = (m, s) => (m?.dayNight ? ['Dinner', 'Tea', 'Stumps'] : SESS_END)[s];
 const snapInns = (m = live) => m.inns.map(i => ({ bat: i.bat, runs: i.runs, wkts: i.wkts, balls: i.balls }));
 const ballsOf = s => s.reduce((a, x) => a + x.balls, 0);
 // The match clock. Matches started before sessions existed count everything so far as day 1, morning.
@@ -1048,6 +1053,11 @@ export function matchBallsLeft(m = live) {
   return Math.max(0, t - todayBalls(m));
 }
 // Change how many overs today has. Must not be fewer than have already been bowled today.
+function coreDayNight(on) {
+  if (!isTest()) return 'only Test matches have sessions';
+  live.dayNight = !!on;
+  return null;
+}
 function coreDayOvers(overs) {
   if (!isTest()) return 'overs per day are only kept in Test matches';
   if (live.status === 'done') return 'the match had already finished';
@@ -1076,7 +1086,7 @@ function coreSession(stumps) {
   const end = snapInns();
   const endsDay = !!stumps || c.s === 2;
   live.sessions = live.sessions || [];
-  live.sessions.push({ day: c.day, s: c.s, start: c.start, end, stumps: endsDay, label: endsDay ? 'Stumps' : SESS_END[c.s], text: closeText() });
+  live.sessions.push({ day: c.day, s: c.s, start: c.start, end, stumps: endsDay, label: endsDay ? 'Stumps' : sessEnd(live, c.s), text: closeText() });
   if (endsDay) { c.day++; c.s = 0; c.dayStart = end; } else c.s++;
   c.start = end;
   live.clock = c;
@@ -1106,7 +1116,7 @@ export function daysHTML(m) {
   const body = rows.map(se => {
     const st = sessionStats(se, m);
     const who = [0, 1].filter(t => st.by[t].batted).map(t => `${esc(m.teams[t])} ${st.by[t].runs}${st.by[1 - t].wkts ? `, took ${plural(st.by[1 - t].wkts, 'wicket')}` : ''}`).join(' · ');
-    return `<tr${se.now ? ' class="hl"' : ''}><td class="dim">Day ${se.day}</td><td>${SESS[se.s]}${se.now ? ' <span class="badge live" style="font-size:.6rem">Now</span>' : ''}</td><td class="num">${st.runs}/${st.wkts}</td><td class="num">${fmtOvers(st.balls)}</td><td style="white-space:normal">${who || '<span class="dim">—</span>'}</td><td>${st.verdict ? (st.verdict === 'Shared' ? '<span class="dim">Shared</span>' : `<b>${esc(st.verdict)}</b>`) : ''}</td><td style="white-space:normal" class="dim">${se.now ? '' : `${esc(se.label)}: ${esc(se.text)}`}</td></tr>`;
+    return `<tr${se.now ? ' class="hl"' : ''}><td class="dim">Day ${se.day}</td><td>${sessName(m, se.s)}${se.now ? ' <span class="badge live" style="font-size:.6rem">Now</span>' : ''}</td><td class="num">${st.runs}/${st.wkts}</td><td class="num">${fmtOvers(st.balls)}</td><td style="white-space:normal">${who || '<span class="dim">—</span>'}</td><td>${st.verdict ? (st.verdict === 'Shared' ? '<span class="dim">Shared</span>' : `<b>${esc(st.verdict)}</b>`) : ''}</td><td style="white-space:normal" class="dim">${se.now ? '' : `${esc(se.label)}: ${esc(se.text)}`}</td></tr>`;
   }).join('');
   return `<div class="card scorecard days-card">
     <div class="sc-head"><h3>Day by day</h3><span class="hint" style="margin:0">${tipBtn('Who had the better of each session: runs scored plus about 25 runs for every wicket taken. Within 20 of each other, it is called shared.', 'session verdicts')}</span></div>
@@ -1209,14 +1219,14 @@ export function testCardHTML() {
   }
   const btn = (v, label, ghost) => `<button type="button" class="btn ${ghost ? 'ghost ' : ''}sm" data-act="session" data-v="${v}">${label}</button>`;
   return `<div class="card test-card">
-    <h2 class="card-title">Day ${c.day} of ${days} · ${SESS[c.s].toLowerCase()} session</h2>
+    <h2 class="card-title">Day ${c.day} of ${days} · ${sessName(live, c.s).toLowerCase()} session${live.dayNight ? ' (day-night)' : ''}</h2>
     <ul class="g-facts">
       <li><span>Overs today</span><b>${fmtOvers(today)} of ${fmtOvers(sched)} bowled${sched !== DAY_BALLS ? ' (changed)' : ''} · about ${fmtOvers(leftToday)} left <button type="button" class="btn ghost sm" data-act="dayovers" style="margin-left:8px">Rain / change overs</button></b></li>
       ${lines.join('')}
     </ul>
     ${decl}
-    <div class="modal-actions" style="justify-content:flex-start;margin-top:12px">${c.s < 2 ? `${btn('', SESS_END[c.s])}${btn('1', 'Stumps now', true)}` : btn('1', c.day >= days ? 'Stumps: end of the match' : 'Stumps')}</div>
-    <p class="hint" style="margin-top:8px">${c.day >= days && c.s === 2 ? 'Stumps on the last day ends the match as a draw.' : c.s < 2 ? `Press ${SESS_END[c.s]} at the break. “Stumps now” ends the day early (bad light, rain), and the rest of today's overs are lost.` : 'Press Stumps at the close of play.'}</p>
+    <div class="modal-actions" style="justify-content:flex-start;margin-top:12px">${c.s < 2 ? `${btn('', sessEnd(live, c.s))}${btn('1', 'Stumps now', true)}` : btn('1', c.day >= days ? 'Stumps: end of the match' : 'Stumps')}</div>
+    <p class="hint" style="margin-top:8px">${c.day >= days && c.s === 2 ? 'Stumps on the last day ends the match as a draw.' : c.s < 2 ? `Press ${sessEnd(live, c.s)} at the break. “Stumps now” ends the day early (bad light, rain), and the rest of today's overs are lost.` : 'Press Stumps at the close of play.'} <button type="button" class="btn ghost sm" data-act="daynight" style="margin-left:6px">${live.dayNight ? 'Not a day-night Test' : 'Day-night Test?'}</button></p>
   </div>`;
 }
 export function endInnings(reason) {
@@ -1640,6 +1650,7 @@ export function setupHTML() {
       ${selectField('ls-type', 'Match type', [{ v: 'limited', l: 'Limited overs' }, { v: 'test', l: 'Test: two innings each' }], prefill?.test || (f.key === 'Test' && !prefill) ? 'test' : 'limited')}
       ${selectField('ls-imp', 'Impact Player rule', [{ v: '0', l: 'Off' }, { v: '1', l: 'On: choose the impact player from your bench' }], prefill?.impact ? '1' : '0')}
       ${selectField('ls-days', 'Days left when play starts (sets the follow-on)', [5, 4, 3, 2, 1].map(d => ({ v: String(d), l: `${d} day${d > 1 ? 's' : ''} · follow-on at ${FOLLOW_ON[d]}` })), '5')}
+      <label class="check" id="ls-dn-wrap" style="margin-top:8px"><input type="checkbox" id="ls-dn"> Day-night Test (pink ball: first break is dinner)</label>
     </div>
     <div class="modal-actions" style="justify-content:flex-start;margin-top:10px"><button type="button" class="btn ghost sm" data-act="swap-teams">Swap batting order</button></div>
     <div class="grid-2 squads">
@@ -1679,6 +1690,7 @@ function setupSync(target) {
   const ovEl = $('#ls-ov'), daysWrap = $('#ls-days')?.closest('.field');
   if (ovEl) { ovEl.disabled = test; if (test) ovEl.value = ''; else if (!ovEl.value && id === 'ls-type') ovEl.value = String(fmt().overs ?? 20); }
   if (daysWrap) daysWrap.hidden = !test;
+  const dnWrap = $('#ls-dn-wrap'); if (dnWrap) dnWrap.hidden = !test;
   if (['ls-s', 'ls-ns', 'ls-bw'].includes(id)) { target.dataset.auto = '0'; return; }
   const saved = squadStore();
   [['a', 'ls-ta'], ['b', 'ls-tb']].forEach(([s, teamId]) => {
@@ -1779,7 +1791,7 @@ export function startMatch() {
   if (impact) { const bs = benchStore(); [[ta, 0], [tb, 1]].forEach(([n, k]) => { if (bench[k].length) bs[n.toLowerCase()] = bench[k]; else delete bs[n.toLowerCase()]; }); store.set('benches', bs); }
   live = { id: uid(), created: Date.now(), teams: [ta, tb], overs: ov, pps, squads: squads.map(q => q.length ? q : null), keepers: full.map(f => f.names.length ? f.keeper : null), captains: full.map(f => f.names.length ? f.captain : null), format: test ? 'Test' : fmt().label, status: 'live', inns: [newInnings(0, s, ns, bw, null)], result: null };
   if (impact) { live.impact = true; live.bench = bench.map(b => (b.length ? b : null)); }
-  if (test) { live.matchType = 'test'; live.days = Number(g('ls-days')) || 5; live.followOn = FOLLOW_ON[live.days] || 200; live.clock = { day: 1, s: 0, start: [], dayStart: [] }; live.sessions = []; }
+  if (test) { live.matchType = 'test'; live.dayNight = !!$('#ls-dn')?.checked; live.days = Number(g('ls-days')) || 5; live.followOn = FOLLOW_ON[live.days] || 200; live.clock = { day: 1, s: 0, start: [], dayStart: [] }; live.sessions = []; }
   if (prefill?.link) live.tournament = prefill.link;
   prefill = null; store.del('livePrefill');
   bbbOpen.clear();
@@ -2880,6 +2892,7 @@ export async function liveAction(action, el) {
     case 'rain': rainModal(); break;
     case 'impact': impactModal(); break;
     case 'dayovers': dayOversModal(); break;
+    case 'daynight': { const on = !live.dayNight; const err = act({ t: 'daynight', on }, () => coreDayNight(on)); toast(err ? `Can't do that: ${err}.` : on ? 'Day-night Test: first break is now dinner' : 'Back to lunch, tea and stumps'); break; }
     case 'session': {
       const stumps = el.dataset.v === '1', c = clockOf();
       const lastDay = (stumps || c.s === 2) && c.day >= (live.days || 5);
